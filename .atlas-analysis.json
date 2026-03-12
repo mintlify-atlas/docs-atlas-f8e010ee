@@ -1,0 +1,141 @@
+{
+  "projectType": "saas",
+  "projectName": "StudyQuest",
+  "projectDescription": "AI-powered mobile study platform that transforms PDFs into interactive learning experiences with flashcards, quizzes, and gamified progression.",
+  "theme": "almond",
+  "primaryColor": "#2281fa",
+  "lightColor": "#095fd9",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/ai-content-generation",
+              "features/flashcards",
+              "features/quizzes",
+              "features/progression-system"
+            ]
+          },
+          {
+            "group": "User Guide",
+            "pages": [
+              "guide/creating-worlds",
+              "guide/studying-with-flashcards",
+              "guide/taking-quizzes",
+              "guide/tracking-progress"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/clean-architecture",
+              "architecture/state-management",
+              "architecture/backend-worker"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "dev/environment-setup",
+              "dev/flutter-setup",
+              "dev/supabase-configuration"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "dev/authentication",
+              "dev/document-management",
+              "dev/level-system",
+              "dev/notification-service"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "dev/backend/worker-setup",
+              "dev/backend/ai-integration",
+              "dev/backend/pdf-processing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Features",
+            "pages": [
+              "api/auth/overview",
+              "api/auth/repositories",
+              "api/auth/bloc",
+              "api/home/overview",
+              "api/home/repositories",
+              "api/home/bloc"
+            ]
+          },
+          {
+            "group": "Core Services",
+            "pages": [
+              "api/core/theme",
+              "api/core/notifications",
+              "api/core/dependency-injection"
+            ]
+          },
+          {
+            "group": "Domain Entities",
+            "pages": [
+              "api/entities/user",
+              "api/entities/document",
+              "api/entities/level",
+              "api/entities/flashcard",
+              "api/entities/quiz"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "AI-powered content generation from PDFs using Google Gemini",
+    "Interactive flashcard system with spaced repetition",
+    "Gamified quiz system with lives and XP rewards",
+    "Level-based progression system with unlockable content",
+    "Text-to-speech support for enhanced learning",
+    "Profile management with XP tracking and streaks",
+    "Clean Architecture with BLoC state management",
+    "Cross-platform Flutter application (iOS, Android, Web, Desktop)"
+  ],
+  "publicApiSurface": [
+    "AuthBloc - Authentication state management",
+    "HomeBloc - Document and world management",
+    "LevelBloc - Level progression and unlocking",
+    "AuthRepository - User authentication operations",
+    "HomeRepository - Document CRUD operations",
+    "LevelRepository - Flashcard and quiz data access",
+    "NotificationService - Local notification scheduling",
+    "FlashcardsPage - Interactive flashcard learning UI",
+    "QuizPage - Multiple-choice quiz interface",
+    "LevelMapPage - Gamified level progression view",
+    "HomePage - Document/world management dashboard",
+    "ProfilePage - User statistics and profile"
+  ]
+}
