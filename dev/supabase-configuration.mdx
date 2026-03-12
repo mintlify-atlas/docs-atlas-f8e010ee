@@ -1,0 +1,696 @@
+---
+title: 'Supabase Configuration'
+description: 'Set up and configure Supabase backend for StudyQuest'
+---
+
+## Overview
+
+StudyQuest uses **Supabase** as its backend-as-a-service (BaaS) platform, providing:
+- **Authentication** - User registration and login
+- **Database** - PostgreSQL for storing user data, documents, and learning content
+- **Storage** - File storage for PDF uploads
+- **Real-time** - Live data synchronization
+
+<Info>
+Supabase is an open-source Firebase alternative built on PostgreSQL.
+</Info>
+
+## Prerequisites
+
+<Steps>
+  <Step title="Create Supabase Account">
+    Sign up for a free account at [supabase.com](https://supabase.com)
+  </Step>
+
+  <Step title="Create New Project">
+    1. Click "New Project"
+    2. Choose an organization (or create one)
+    3. Set project name: `studyquest` or similar
+    4. Set a strong database password
+    5. Choose a region close to your users
+    6. Click "Create new project"
+    
+    <Warning>
+    Save your database password - you'll need it for direct database access!
+    </Warning>
+  </Step>
+
+  <Step title="Wait for Project Initialization">
+    Project setup takes 1-2 minutes. Wait for the status to show "Active".
+  </Step>
+</Steps>
+
+## Get API Credentials
+
+Once your project is ready, gather your credentials:
+
+<Steps>
+  <Step title="Navigate to Project Settings">
+    Click the **Settings** icon (⚙️) in the left sidebar, then select **API**.
+  </Step>
+
+  <Step title="Copy Credentials">
+    You'll need two values:
+    
+    <ParamField path="URL" type="string" required>
+      Your project URL (e.g., `https://xxxxx.supabase.co`)
+    </ParamField>
+    
+    <ParamField path="anon public" type="string" required>
+      Your anonymous/public API key (starts with `eyJ...`)
+    </ParamField>
+    
+    <Warning>
+    The `anon` key is safe to use in your Flutter app. Never use the `service_role` key in client code!
+    </Warning>
+  </Step>
+</Steps>
+
+## Configure Flutter App
+
+### Create Secrets File
+
+The app expects a secrets file at `lib/core/secrets.dart` (gitignored at `.gitignore:43`):
+
+<Steps>
+  <Step title="Create Directory">
+    ```bash
+    mkdir -p lib/core
+    ```
+  </Step>
+
+  <Step title="Create Secrets File">
+    Create `lib/core/secrets.dart` with your credentials:
+    
+    ```dart lib/core/secrets.dart
+    class Secrets {
+      static const String supabaseUrl = 'https://your-project.supabase.co';
+      static const String supabaseAnonKey = 'eyJhbGci...';
+    }
+    ```
+    
+    <Warning>
+    Replace with your actual credentials from the Supabase dashboard!
+    </Warning>
+  </Step>
+
+  <Step title="Verify Gitignore">
+    Ensure `lib/core/secrets.dart` is in `.gitignore` (it already is at line 43):
+    
+    ```text .gitignore
+    # Ignorar archivo de credenciales
+    lib/core/secrets.dart
+    ```
+    
+    This prevents committing sensitive credentials to version control.
+  </Step>
+</Steps>
+
+### Initialize Supabase in App
+
+The app initializes Supabase in `main.dart:16-19`:
+
+```dart main.dart
+await Supabase.initialize(
+  url: Secrets.supabaseUrl,
+  anonKey: Secrets.supabaseAnonKey,
+);
+```
+
+This happens before the app starts, ensuring the Supabase client is available throughout the app.
+
+## Database Schema
+
+StudyQuest uses these database tables:
+
+### Core Tables
+
+<AccordionGroup>
+  <Accordion title="profiles" icon="user">
+    Stores user profile data and gamification metrics.
+    
+    ```sql
+    create table profiles (
+      id uuid references auth.users on delete cascade primary key,
+      username text,
+      total_xp integer default 0,
+      current_streak integer default 0,
+      last_activity_date date,
+      created_at timestamp with time zone default timezone('utc'::text, now())
+    );
+    
+    -- Enable Row Level Security
+    alter table profiles enable row level security;
+    
+    -- Users can only read/update their own profile
+    create policy "Users can view own profile"
+      on profiles for select
+      using ( auth.uid() = id );
+    
+    create policy "Users can update own profile"
+      on profiles for update
+      using ( auth.uid() = id );
+    ```
+    
+    **Used by**: `auth_remote_data_source.dart:22-52`
+  </Accordion>
+
+  <Accordion title="documents" icon="file-pdf">
+    Stores uploaded PDF documents and processing status.
+    
+    ```sql
+    create table documents (
+      id uuid default uuid_generate_v4() primary key,
+      user_id uuid references auth.users on delete cascade not null,
+      title text not null,
+      file_url text not null,
+      status text default 'processing' check (status in ('processing', 'ready', 'error')),
+      summary_text text,
+      created_at timestamp with time zone default timezone('utc'::text, now())
+    );
+    
+    alter table documents enable row level security;
+    
+    create policy "Users can view own documents"
+      on documents for select
+      using ( auth.uid() = user_id );
+    
+    create policy "Users can insert own documents"
+      on documents for insert
+      with check ( auth.uid() = user_id );
+    ```
+    
+    **Used by**: `home_remote_data_source.dart:38-49`, `home_remote_data_source.dart:58-69`
+  </Accordion>
+
+  <Accordion title="topics" icon="book">
+    Stores learning topics/levels generated from documents.
+    
+    ```sql
+    create table topics (
+      id uuid default uuid_generate_v4() primary key,
+      document_id uuid references documents on delete cascade not null,
+      title text not null,
+      description text,
+      order_index integer default 0,
+      created_at timestamp with time zone default timezone('utc'::text, now())
+    );
+    
+    alter table topics enable row level security;
+    
+    create policy "Users can view topics of their documents"
+      on topics for select
+      using (
+        exists (
+          select 1 from documents
+          where documents.id = topics.document_id
+          and documents.user_id = auth.uid()
+        )
+      );
+    ```
+    
+    **Used by**: `worker.py:174-180`
+  </Accordion>
+
+  <Accordion title="flashcards" icon="cards-blank">
+    Stores flashcard study materials.
+    
+    ```sql
+    create table flashcards (
+      id uuid default uuid_generate_v4() primary key,
+      document_id uuid references documents on delete cascade not null,
+      topic_id uuid references topics on delete cascade not null,
+      front_text text not null,
+      back_text text not null,
+      mastery_level integer default 1,
+      created_at timestamp with time zone default timezone('utc'::text, now())
+    );
+    
+    alter table flashcards enable row level security;
+    
+    create policy "Users can view flashcards of their documents"
+      on flashcards for select
+      using (
+        exists (
+          select 1 from documents
+          where documents.id = flashcards.document_id
+          and documents.user_id = auth.uid()
+        )
+      );
+    ```
+    
+    **Used by**: `worker.py:184-195`
+  </Accordion>
+
+  <Accordion title="quizzes" icon="question">
+    Stores quiz questions for assessment.
+    
+    ```sql
+    create table quizzes (
+      id uuid default uuid_generate_v4() primary key,
+      document_id uuid references documents on delete cascade not null,
+      topic_id uuid references topics on delete cascade not null,
+      question_text text not null,
+      options text[] not null, -- Array of 4 options
+      correct_answer_index integer not null,
+      explanation text,
+      created_at timestamp with time zone default timezone('utc'::text, now())
+    );
+    
+    alter table quizzes enable row level security;
+    
+    create policy "Users can view quizzes of their documents"
+      on quizzes for select
+      using (
+        exists (
+          select 1 from documents
+          where documents.id = quizzes.document_id
+          and documents.user_id = auth.uid()
+        )
+      );
+    ```
+    
+    **Used by**: `worker.py:197-209`
+  </Accordion>
+</AccordionGroup>
+
+### Create Database Schema
+
+<Steps>
+  <Step title="Open SQL Editor">
+    In your Supabase dashboard, navigate to **SQL Editor** in the left sidebar.
+  </Step>
+
+  <Step title="Run Schema Script">
+    Copy and paste all the SQL from the accordions above, then click **Run**.
+    
+    Or create a new migration:
+    ```sql
+    -- Run all CREATE TABLE statements in order:
+    -- 1. profiles
+    -- 2. documents
+    -- 3. topics
+    -- 4. flashcards
+    -- 5. quizzes
+    ```
+  </Step>
+
+  <Step title="Create RPC Function">
+    The app uses a PostgreSQL function to add XP. Create it:
+    
+    ```sql
+    create or replace function add_xp(amount integer)
+    returns void
+    language plpgsql
+    security definer
+    as $$
+    begin
+      update profiles
+      set total_xp = total_xp + amount
+      where id = auth.uid();
+    end;
+    $$;
+    ```
+    
+    **Used by**: `auth_remote_data_source.dart:114`
+  </Step>
+</Steps>
+
+## Configure Storage
+
+StudyQuest uses Supabase Storage for PDF file uploads.
+
+<Steps>
+  <Step title="Navigate to Storage">
+    Click **Storage** in the left sidebar of your Supabase dashboard.
+  </Step>
+
+  <Step title="Create Bucket">
+    1. Click **New bucket**
+    2. Name: `pdfs`
+    3. **Public bucket**: Toggle ON (allows public URL access)
+    4. Click **Create bucket**
+  </Step>
+
+  <Step title="Configure Bucket Policies">
+    Set up Row Level Security policies for the bucket:
+    
+    ```sql
+    -- Allow authenticated users to upload
+    create policy "Users can upload PDFs"
+      on storage.objects for insert
+      with check (
+        bucket_id = 'pdfs'
+        and auth.role() = 'authenticated'
+      );
+    
+    -- Allow users to read their own PDFs
+    create policy "Users can read own PDFs"
+      on storage.objects for select
+      using (
+        bucket_id = 'pdfs'
+        and auth.uid()::text = (storage.foldername(name))[1]
+      );
+    ```
+    
+    **Used by**: `home_remote_data_source.dart:28-35`
+  </Step>
+</Steps>
+
+## Authentication Setup
+
+Supabase provides built-in authentication. Configure it:
+
+<Steps>
+  <Step title="Navigate to Authentication">
+    Click **Authentication** → **Settings** in the dashboard.
+  </Step>
+
+  <Step title="Configure Email Auth">
+    1. Enable **Email** provider (enabled by default)
+    2. **Enable email confirmations**: Toggle OFF for development
+    3. **Enable custom SMTP**: Optional (uses Supabase emails by default)
+  </Step>
+
+  <Step title="Configure URL Settings">
+    In **Authentication** → **URL Configuration**:
+    
+    - **Site URL**: `http://localhost` (for development)
+    - **Redirect URLs**: Add your app's deep link URLs
+  </Step>
+
+  <Step title="Test Authentication">
+    The Flutter app handles auth via `auth_remote_data_source.dart`:
+    
+    **Login** (`auth_remote_data_source.dart:55-72`):
+    ```dart
+    final response = await supabaseClient.auth.signInWithPassword(
+      email: email,
+      password: password,
+    );
+    ```
+    
+    **Register** (`auth_remote_data_source.dart:75-92`):
+    ```dart
+    final response = await supabaseClient.auth.signUp(
+      email: email,
+      password: password,
+      data: {'username': username},
+    );
+    ```
+  </Step>
+</Steps>
+
+## Backend Worker Setup
+
+StudyQuest uses a Python worker (`backend/worker.py`) to process PDFs with AI.
+
+### Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Python 3.8+" icon="python">
+    Required for running the worker script
+  </Card>
+  <Card title="Google AI API Key" icon="key">
+    Get from [aistudio.google.com](https://aistudio.google.com)
+  </Card>
+</CardGroup>
+
+### Setup Worker
+
+<Steps>
+  <Step title="Install Python Dependencies">
+    ```bash
+    cd backend
+    
+    # Create virtual environment
+    python -m venv venv
+    
+    # Activate virtual environment
+    source venv/bin/activate  # macOS/Linux
+    venv\Scripts\activate     # Windows
+    
+    # Install dependencies
+    pip install -r requirements.txt
+    ```
+    
+    Dependencies from `requirements.txt:1-4`:
+    - `supabase` - Supabase Python client
+    - `google-generativeai` - Google Gemini AI
+    - `pypdf` - PDF text extraction
+    - `python-dotenv` - Environment variable management
+  </Step>
+
+  <Step title="Create Environment File">
+    Create `backend/.env` with your credentials:
+    
+    ```env backend/.env
+    SUPABASE_URL=https://your-project.supabase.co
+    SUPABASE_KEY=your_service_role_key_here
+    GEMINI_API_KEY=your_gemini_api_key_here
+    ```
+    
+    <Warning>
+    Use the **service_role** key for the worker (it needs full database access). Find it in **Settings** → **API** → **service_role key**.
+    </Warning>
+  </Step>
+
+  <Step title="Run the Worker">
+    ```bash
+    python worker.py
+    ```
+    
+    The worker polls for documents with `status = 'processing'` and:
+    1. Downloads PDF from Supabase Storage
+    2. Extracts text using PyPDF
+    3. Sends text to Google Gemini AI
+    4. Parses AI response for topics, flashcards, and quizzes
+    5. Saves everything to Supabase database
+    6. Updates document status to `ready`
+    
+    See `worker.py:134-229` for full implementation.
+  </Step>
+</Steps>
+
+## How Data Flows
+
+<Steps>
+  <Step title="User Uploads PDF">
+    ```dart home_remote_data_source.dart
+    // 1. Upload file to Storage
+    await supabaseClient.storage.from('pdfs').upload(storagePath, file);
+    
+    // 2. Get public URL
+    final publicUrl = supabaseClient.storage.from('pdfs').getPublicUrl(storagePath);
+    
+    // 3. Create document record
+    await supabaseClient.from('documents').insert({
+      'user_id': user.id,
+      'title': fileName,
+      'file_url': publicUrl,
+      'status': 'processing',
+    });
+    ```
+  </Step>
+
+  <Step title="Worker Processes PDF">
+    ```python worker.py
+    # Poll for processing documents
+    documents = supabase.table('documents').select("*").eq('status', 'processing').execute()
+    
+    # Extract text and generate content with AI
+    full_text = extract_all_text_from_pdf(doc['file_url'])
+    ai_data = generate_content_for_chunk(full_text)
+    
+    # Save topics, flashcards, quizzes
+    supabase.table('topics').insert({...}).execute()
+    ```
+  </Step>
+
+  <Step title="App Displays Content">
+    ```dart
+    // Fetch processed documents
+    final documents = await supabase
+      .from('documents')
+      .select()
+      .eq('user_id', user.id)
+      .eq('status', 'ready');
+    ```
+  </Step>
+</Steps>
+
+## Testing the Integration
+
+<Steps>
+  <Step title="Run the Flutter App">
+    ```bash
+    flutter run
+    ```
+  </Step>
+
+  <Step title="Create an Account">
+    1. Open the app
+    2. Click **Register**
+    3. Enter email and password
+    4. Submit
+    
+    Check Supabase dashboard → **Authentication** → **Users** to verify the user was created.
+  </Step>
+
+  <Step title="Verify Profile Creation">
+    Check the `profiles` table in **Table Editor**. A row should exist with the user's ID.
+  </Step>
+
+  <Step title="Upload a PDF (Optional)">
+    1. Start the Python worker: `python backend/worker.py`
+    2. In the app, upload a PDF
+    3. Check **Storage** → **pdfs** bucket for the file
+    4. Check `documents` table for the record
+    5. Wait for worker to process (status changes to `ready`)
+    6. Check `topics`, `flashcards`, and `quizzes` tables
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection Failed">
+    **Error**: `SupabaseException: Failed to connect to https://...`
+    
+    **Solutions**:
+    1. Verify URL is correct (no trailing slash)
+    2. Check project is active in dashboard
+    3. Verify API key is the `anon` key, not `service_role`
+    4. Check firewall/network settings
+  </Accordion>
+
+  <Accordion title="Row Level Security Errors">
+    **Error**: `new row violates row-level security policy`
+    
+    **Solutions**:
+    1. Verify RLS policies are created for all tables
+    2. Check user is authenticated: `auth.uid()` should not be null
+    3. Review policy SQL - ensure correct permissions
+    4. For testing, temporarily disable RLS:
+    ```sql
+    alter table your_table disable row level security;
+    ```
+    <Warning>Never disable RLS in production!</Warning>
+  </Accordion>
+
+  <Accordion title="Storage Upload Fails">
+    **Error**: `StorageException: Upload failed`
+    
+    **Solutions**:
+    1. Verify `pdfs` bucket exists
+    2. Check bucket is set to **public**
+    3. Verify storage policies allow uploads
+    4. Check file size limits (50MB default)
+    5. Ensure user is authenticated
+  </Accordion>
+
+  <Accordion title="Worker Not Processing">
+    **Problem**: PDFs stay in `processing` status
+    
+    **Solutions**:
+    1. Check worker is running: `python worker.py`
+    2. Verify `backend/.env` has correct credentials
+    3. Check worker logs for errors
+    4. Verify GEMINI_API_KEY is valid
+    5. Ensure PDF is text-based (not scanned image)
+    6. Check Supabase service_role key is used (not anon key)
+  </Accordion>
+
+  <Accordion title="Auth Errors">
+    **Error**: `AuthException: Invalid login credentials`
+    
+    **Solutions**:
+    1. Check email/password are correct
+    2. Verify email confirmations are disabled (dev)
+    3. Check user exists in **Authentication** dashboard
+    4. Try resetting password via dashboard
+    5. Check for rate limiting (too many attempts)
+  </Accordion>
+</AccordionGroup>
+
+## Security Best Practices
+
+<Warning>
+**Critical Security Rules**:
+
+1. **Never commit secrets** - `secrets.dart` and `.env` are gitignored
+2. **Use anon key in Flutter** - Service role key only for backend
+3. **Enable RLS on all tables** - Prevent unauthorized data access
+4. **Validate on backend** - Don't trust client input
+5. **Use HTTPS only** - No HTTP in production
+6. **Rotate keys regularly** - Especially if leaked
+</Warning>
+
+## Environment Variables Reference
+
+### Flutter App (`lib/core/secrets.dart`)
+
+```dart
+class Secrets {
+  static const String supabaseUrl = 'YOUR_SUPABASE_URL';
+  static const String supabaseAnonKey = 'YOUR_ANON_KEY';
+}
+```
+
+### Python Worker (`backend/.env`)
+
+```env
+SUPABASE_URL=YOUR_SUPABASE_URL
+SUPABASE_KEY=YOUR_SERVICE_ROLE_KEY
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+```
+
+## Useful Supabase Commands
+
+```bash
+# Install Supabase CLI (optional)
+npm install -g supabase
+
+# Login to Supabase
+supabase login
+
+# Link to your project
+supabase link --project-ref your-project-id
+
+# Pull remote schema
+supabase db pull
+
+# Run migrations locally
+supabase db reset
+
+# Generate TypeScript types
+supabase gen types typescript --local
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Run the App" icon="play">
+    Everything is configured! Run `flutter run` to start developing.
+  </Card>
+  <Card title="Deploy Backend" icon="cloud">
+    Deploy the Python worker to a server or cloud function for production.
+  </Card>
+</CardGroup>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="Supabase Docs" icon="book" href="https://supabase.com/docs">
+    Official Supabase documentation
+  </Card>
+  <Card title="Flutter Supabase Package" icon="box" href="https://pub.dev/packages/supabase_flutter">
+    Package documentation on pub.dev
+  </Card>
+  <Card title="Google AI Studio" icon="brain" href="https://aistudio.google.com">
+    Get your Gemini API key
+  </Card>
+  <Card title="Row Level Security" icon="shield" href="https://supabase.com/docs/guides/auth/row-level-security">
+    Learn about RLS policies
+  </Card>
+</CardGroup>

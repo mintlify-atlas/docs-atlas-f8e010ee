@@ -1,0 +1,413 @@
+---
+title: 'Environment Setup'
+description: 'Complete guide to setting up your development environment for StudyQuest'
+---
+
+## Overview
+
+StudyQuest is a Flutter-based mobile application with a Supabase backend and AI-powered content generation. This guide will walk you through setting up your complete development environment.
+
+## System Requirements
+
+<CardGroup cols={2}>
+  <Card title="Operating System" icon="desktop">
+    - macOS (for iOS development)
+    - Linux (Ubuntu 20.04+)
+    - Windows 10/11
+  </Card>
+  <Card title="Required Software" icon="download">
+    - Flutter SDK 3.10.7+
+    - Dart SDK 3.10.7+
+    - Git
+    - VS Code or Android Studio
+  </Card>
+</CardGroup>
+
+## Prerequisites Installation
+
+<Steps>
+  <Step title="Install Git">
+    Download and install Git from [git-scm.com](https://git-scm.com/downloads)
+    
+    Verify installation:
+    ```bash
+    git --version
+    ```
+  </Step>
+
+  <Step title="Install Flutter SDK">
+    <Info>StudyQuest requires Flutter SDK **3.10.7 or higher** with Dart SDK **^3.10.7**</Info>
+    
+    Follow the official Flutter installation guide for your platform:
+    
+    <CodeGroup>
+    ```bash macOS
+    # Using Homebrew
+    brew install flutter
+    
+    # Or download directly
+    curl -O https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_3.10.7-stable.zip
+    unzip flutter_macos_3.10.7-stable.zip
+    export PATH="$PATH:`pwd`/flutter/bin"
+    ```
+    
+    ```bash Linux
+    # Download Flutter
+    wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.10.7-stable.tar.xz
+    tar xf flutter_linux_3.10.7-stable.tar.xz
+    export PATH="$PATH:`pwd`/flutter/bin"
+    
+    # Add to .bashrc or .zshrc
+    echo 'export PATH="$PATH:/path/to/flutter/bin"' >> ~/.bashrc
+    ```
+    
+    ```powershell Windows
+    # Download Flutter SDK from flutter.dev
+    # Extract to C:\src\flutter
+    # Add to PATH environment variable
+    
+    # Verify installation
+    flutter --version
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Run Flutter Doctor">
+    Check your Flutter installation and resolve any issues:
+    
+    ```bash
+    flutter doctor -v
+    ```
+    
+    Expected output should show:
+    - ✓ Flutter (Channel stable, 3.10.7+)
+    - ✓ Android toolchain
+    - ✓ Xcode (macOS only)
+    - ✓ VS Code or Android Studio
+    - ✓ Connected devices
+  </Step>
+
+  <Step title="Install IDE Extensions">
+    <Tabs>
+      <Tab title="VS Code">
+        Install these extensions:
+        - [Flutter](https://marketplace.visualstudio.com/items?itemName=Dart-Code.flutter)
+        - [Dart](https://marketplace.visualstudio.com/items?itemName=Dart-Code.dart-code)
+        
+        ```bash
+        code --install-extension Dart-Code.flutter
+        code --install-extension Dart-Code.dart-code
+        ```
+      </Tab>
+      
+      <Tab title="Android Studio">
+        1. Open Android Studio
+        2. Go to **Plugins**
+        3. Search and install:
+           - Flutter plugin
+           - Dart plugin
+        4. Restart Android Studio
+      </Tab>
+    </Tabs>
+  </Step>
+</Steps>
+
+## Clone the Repository
+
+```bash
+# Clone the repository
+git clone <repository-url> study_quest
+cd study_quest
+
+# Checkout the main branch
+git checkout main
+```
+
+## Project Dependencies
+
+StudyQuest uses the following core dependencies:
+
+### Production Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|----------|
+| `flutter` | SDK | Core Flutter framework |
+| `cupertino_icons` | ^1.0.8 | iOS-style icons |
+| `rive` | ^0.13.1 | Interactive animations |
+| `confetti` | ^0.7.0 | Celebration effects |
+| `flutter_tts` | ^4.2.5 | Text-to-speech functionality |
+| `flutter_local_notifications` | ^17.1.2 | Local notifications |
+| `timezone` | ^0.9.0 | Timezone handling |
+| `audioplayers` | ^6.6.0 | Audio playback |
+
+### Development Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|----------|
+| `flutter_bloc` | ^8.1.3 | State management (BLoC pattern) |
+| `equatable` | ^2.0.5 | Value equality for BLoC |
+| `get_it` | ^7.6.0 | Dependency injection |
+| `supabase_flutter` | ^2.8.3 | Supabase client integration |
+| `http` | ^1.2.1 | HTTP requests |
+| `dartz` | ^0.10.1 | Functional programming utilities |
+| `file_picker` | ^8.0.0 | File selection (PDF uploads) |
+| `flutter_lints` | ^6.0.0 | Dart linting rules |
+
+## Install Dependencies
+
+<Steps>
+  <Step title="Clean and Get Packages">
+    ```bash
+    # Clean previous builds
+    flutter clean
+    
+    # Get all dependencies
+    flutter pub get
+    ```
+    
+    <Info>This will download all packages specified in `pubspec.yaml`</Info>
+  </Step>
+
+  <Step title="Verify Installation">
+    Check that all dependencies are resolved:
+    
+    ```bash
+    flutter pub outdated
+    ```
+  </Step>
+</Steps>
+
+## Platform-Specific Setup
+
+<AccordionGroup>
+  <Accordion title="Android Setup">
+    ### Android SDK Requirements
+    - Minimum SDK: 21 (Android 5.0)
+    - Target SDK: 33 (Android 13)
+    - Compile SDK: 33
+    
+    ### Install Android Studio
+    1. Download from [developer.android.com](https://developer.android.com/studio)
+    2. Install Android SDK Command-line Tools
+    3. Accept Android licenses:
+    ```bash
+    flutter doctor --android-licenses
+    ```
+    
+    ### Configure Android Emulator
+    ```bash
+    # Create AVD (Android Virtual Device)
+    flutter emulators --create
+    
+    # List available emulators
+    flutter emulators
+    
+    # Launch emulator
+    flutter emulators --launch <emulator_id>
+    ```
+  </Accordion>
+
+  <Accordion title="iOS Setup (macOS only)">
+    ### Xcode Requirements
+    - Xcode 14.0 or higher
+    - iOS deployment target: 11.0+
+    
+    ### Install Xcode
+    ```bash
+    # Install from App Store or
+    xcode-select --install
+    
+    # Accept Xcode license
+    sudo xcodebuild -license accept
+    
+    # Install CocoaPods
+    sudo gem install cocoapods
+    ```
+    
+    ### Configure iOS Simulator
+    ```bash
+    # Open iOS Simulator
+    open -a Simulator
+    
+    # Install iOS pods
+    cd ios
+    pod install
+    cd ..
+    ```
+  </Accordion>
+
+  <Accordion title="Web Setup">
+    Web support is included with Flutter. Enable it:
+    
+    ```bash
+    flutter config --enable-web
+    
+    # Run on web
+    flutter run -d chrome
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Project Structure
+
+```
+study_quest/
+├── lib/
+│   ├── core/                  # Core utilities
+│   │   ├── errors/           # Error handling
+│   │   ├── services/         # Platform services
+│   │   ├── theme/            # App theming
+│   │   └── widgets/          # Reusable widgets
+│   ├── features/             # Feature modules
+│   │   ├── auth/            # Authentication
+│   │   └── home/            # Home & learning features
+│   ├── injection_container.dart  # DI setup
+│   └── main.dart            # App entry point
+├── assets/                   # Static assets
+│   ├── images/              # Image files
+│   ├── rive/                # Rive animations
+│   └── sounds/              # Audio files
+├── backend/                  # Python AI worker
+│   ├── worker.py            # AI processing service
+│   └── requirements.txt     # Python dependencies
+├── android/                  # Android platform code
+├── ios/                      # iOS platform code
+└── pubspec.yaml             # Flutter dependencies
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Flutter Doctor Issues">
+    **Problem**: `cmdline-tools component is missing`
+    
+    **Solution**:
+    ```bash
+    # Open Android Studio
+    # Go to Settings → Appearance & Behavior → System Settings → Android SDK
+    # Click SDK Tools tab
+    # Install "Android SDK Command-line Tools"
+    ```
+    
+    ---
+    
+    **Problem**: `CocoaPods not installed`
+    
+    **Solution**:
+    ```bash
+    sudo gem install cocoapods
+    pod setup
+    ```
+  </Accordion>
+
+  <Accordion title="Dependency Conflicts">
+    **Problem**: Version conflicts in `pubspec.yaml`
+    
+    **Solution**:
+    ```bash
+    # Delete pubspec.lock
+    rm pubspec.lock
+    
+    # Clean Flutter cache
+    flutter clean
+    flutter pub cache repair
+    
+    # Get dependencies again
+    flutter pub get
+    ```
+  </Accordion>
+
+  <Accordion title="Build Failures">
+    **Problem**: Gradle build fails on Android
+    
+    **Solution**:
+    ```bash
+    cd android
+    ./gradlew clean
+    cd ..
+    flutter clean
+    flutter build apk --debug
+    ```
+    
+    ---
+    
+    **Problem**: iOS build fails
+    
+    **Solution**:
+    ```bash
+    cd ios
+    pod deintegrate
+    pod install
+    cd ..
+    flutter clean
+    flutter build ios
+    ```
+  </Accordion>
+
+  <Accordion title="Assets Not Loading">
+    **Problem**: Images or animations not displaying
+    
+    **Solution**:
+    1. Verify assets are declared in `pubspec.yaml`:
+    ```yaml
+    flutter:
+      assets:
+        - assets/images/
+        - assets/rive/
+        - assets/sounds/
+    ```
+    
+    2. Rebuild the app:
+    ```bash
+    flutter clean
+    flutter pub get
+    flutter run
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Flutter Setup" icon="mobile" href="/dev/flutter-setup">
+    Configure Flutter development environment and run the app
+  </Card>
+  <Card title="Supabase Configuration" icon="database" href="/dev/supabase-configuration">
+    Set up Supabase backend and connect to the app
+  </Card>
+</CardGroup>
+
+## Useful Commands
+
+```bash
+# Check Flutter version
+flutter --version
+
+# Run app in debug mode
+flutter run
+
+# Run app on specific device
+flutter run -d <device_id>
+
+# List available devices
+flutter devices
+
+# Hot reload (during development)
+r
+
+# Hot restart
+R
+
+# Analyze code
+flutter analyze
+
+# Format code
+flutter format .
+
+# Run tests
+flutter test
+```
+
+<Warning>
+Make sure all environment setup is complete before proceeding to Flutter and Supabase configuration.
+</Warning>

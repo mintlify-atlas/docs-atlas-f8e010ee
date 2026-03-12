@@ -1,0 +1,355 @@
+---
+title: 'AuthRepository'
+description: 'Repository contract and methods for authentication operations'
+icon: 'database'
+---
+
+## Overview
+
+The `AuthRepository` defines the contract for all authentication operations in StudyQuest. It uses the Either type from the `dartz` package for functional error handling.
+
+## Import
+
+```dart
+import 'package:study_quest/features/auth/domain/repositories/auth_repository.dart';
+import 'package:study_quest/features/auth/domain/entities/user_entity.dart';
+import 'package:study_quest/features/auth/domain/entities/profile_entity.dart';
+import 'package:dartz/dartz.dart';
+import 'package:study_quest/core/errors/failures.dart';
+```
+
+## Methods
+
+### loginWithEmail
+
+Authenticates a user with email and password.
+
+```dart
+Future<Either<Failure, UserEntity>> loginWithEmail({
+  required String email,
+  required String password,
+});
+```
+
+#### Parameters
+
+<ParamField path="email" type="String" required>
+  User's email address
+</ParamField>
+
+<ParamField path="password" type="String" required>
+  User's password
+</ParamField>
+
+#### Returns
+
+<ResponseField name="Either<Failure, UserEntity>" type="Future">
+  Returns a `UserEntity` on success (Right), or a `Failure` on error (Left)
+</ResponseField>
+
+#### Example
+
+<CodeGroup>
+
+```dart Basic Usage
+final authRepository = getIt<AuthRepository>();
+
+final result = await authRepository.loginWithEmail(
+  email: 'student@example.com',
+  password: 'securePassword123',
+);
+
+result.fold(
+  (failure) => print('Login failed: ${failure.message}'),
+  (user) => print('Welcome back, ${user.username}!'),
+);
+```
+
+```dart With Error Handling
+final result = await authRepository.loginWithEmail(
+  email: email,
+  password: password,
+);
+
+result.fold(
+  (failure) {
+    // Handle different failure types
+    if (failure is ServerFailure) {
+      showError('Server error occurred');
+    } else if (failure is AuthFailure) {
+      showError('Invalid credentials');
+    }
+  },
+  (user) {
+    // Navigate to home screen
+    Navigator.pushReplacementNamed(context, '/home');
+  },
+);
+```
+
+</CodeGroup>
+
+---
+
+### registerWithEmail
+
+Registers a new user with email, password, and username.
+
+```dart
+Future<Either<Failure, UserEntity>> registerWithEmail({
+  required String email,
+  required String password,
+  required String username,
+});
+```
+
+#### Parameters
+
+<ParamField path="email" type="String" required>
+  Email address for the new account
+</ParamField>
+
+<ParamField path="password" type="String" required>
+  Password for the new account
+</ParamField>
+
+<ParamField path="username" type="String" required>
+  Display name for the user
+</ParamField>
+
+#### Returns
+
+<ResponseField name="Either<Failure, UserEntity>" type="Future">
+  Returns a `UserEntity` on successful registration (Right), or a `Failure` on error (Left)
+</ResponseField>
+
+#### Example
+
+<CodeGroup>
+
+```dart Basic Registration
+final authRepository = getIt<AuthRepository>();
+
+final result = await authRepository.registerWithEmail(
+  email: 'newstudent@example.com',
+  password: 'securePassword123',
+  username: 'NewStudent',
+);
+
+result.fold(
+  (failure) => print('Registration failed: ${failure.message}'),
+  (user) => print('Account created for ${user.username}!'),
+);
+```
+
+```dart With Validation
+if (email.isEmpty || !email.contains('@')) {
+  showError('Invalid email address');
+  return;
+}
+
+if (password.length < 6) {
+  showError('Password must be at least 6 characters');
+  return;
+}
+
+final result = await authRepository.registerWithEmail(
+  email: email,
+  password: password,
+  username: username,
+);
+
+result.fold(
+  (failure) => showError(failure.message),
+  (user) {
+    showSuccess('Welcome to StudyQuest, ${user.username}!');
+    Navigator.pushReplacementNamed(context, '/home');
+  },
+);
+```
+
+</CodeGroup>
+
+---
+
+### getCurrentProfile
+
+Retrieves the current user's profile including XP and streak data.
+
+```dart
+Future<Either<Failure, ProfileEntity>> getCurrentProfile();
+```
+
+#### Returns
+
+<ResponseField name="Either<Failure, ProfileEntity>" type="Future">
+  Returns a `ProfileEntity` on success (Right), or a `Failure` on error (Left)
+</ResponseField>
+
+#### Example
+
+<CodeGroup>
+
+```dart Fetch Profile
+final authRepository = getIt<AuthRepository>();
+
+final result = await authRepository.getCurrentProfile();
+
+result.fold(
+  (failure) => print('Failed to load profile: ${failure.message}'),
+  (profile) {
+    print('Total XP: ${profile.totalXp}');
+    print('Current Streak: ${profile.currentStreak} days');
+    print('Level: ${profile.totalXp ~/ 100}');
+  },
+);
+```
+
+```dart With UI Update
+ProfileEntity? userProfile;
+
+final result = await authRepository.getCurrentProfile();
+
+result.fold(
+  (failure) => setState(() => error = failure.message),
+  (profile) => setState(() {
+    userProfile = profile;
+    level = profile.totalXp ~/ 100;
+    xpProgress = (profile.totalXp % 100) / 100;
+  }),
+);
+```
+
+</CodeGroup>
+
+---
+
+### addXp
+
+Adds experience points to the current user's profile.
+
+```dart
+Future<void> addXp(int amount);
+```
+
+#### Parameters
+
+<ParamField path="amount" type="int" required>
+  Amount of XP to add (can be negative to subtract)
+</ParamField>
+
+#### Example
+
+<CodeGroup>
+
+```dart Award XP
+final authRepository = getIt<AuthRepository>();
+
+// Award XP for completing a quiz
+await authRepository.addXp(50);
+
+// Award XP for finishing flashcards
+await authRepository.addXp(25);
+```
+
+```dart With Feedback
+await authRepository.addXp(100);
+
+showDialog(
+  context: context,
+  builder: (context) => AlertDialog(
+    title: const Text('Level Up!'),
+    content: const Text('You earned 100 XP!'),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Awesome!'),
+      ),
+    ],
+  ),
+);
+```
+
+</CodeGroup>
+
+---
+
+### logout
+
+Logs out the current user and clears the session.
+
+```dart
+Future<void> logout();
+```
+
+#### Example
+
+<CodeGroup>
+
+```dart Simple Logout
+final authRepository = getIt<AuthRepository>();
+
+await authRepository.logout();
+
+Navigator.pushReplacementNamed(context, '/welcome');
+```
+
+```dart With Confirmation
+showDialog(
+  context: context,
+  builder: (context) => AlertDialog(
+    title: const Text('Logout'),
+    content: const Text('Are you sure you want to logout?'),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      TextButton(
+        onPressed: () async {
+          Navigator.pop(context);
+          await authRepository.logout();
+          Navigator.pushReplacementNamed(context, '/welcome');
+        },
+        child: const Text('Logout'),
+      ),
+    ],
+  ),
+);
+```
+
+</CodeGroup>
+
+## Error Handling
+
+All methods that return `Either<Failure, T>` follow functional error handling patterns:
+
+```dart
+result.fold(
+  (failure) {
+    // Left side - handle error
+    // failure.message contains error description
+  },
+  (data) {
+    // Right side - handle success
+    // data contains the result
+  },
+);
+```
+
+### Common Failures
+
+- **ServerFailure**: Backend or network errors
+- **AuthFailure**: Authentication errors (invalid credentials, expired session)
+- **ValidationFailure**: Input validation errors
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Auth Overview" icon="shield-halved" href="/api/auth/overview">
+    Feature architecture and entities
+  </Card>
+  <Card title="Auth BLoC" icon="diagram-project" href="/api/auth/bloc">
+    State management and events
+  </Card>
+</CardGroup>

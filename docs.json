@@ -1,122 +1,134 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "StudyQuest",
+  "theme": "almond",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#2281fa",
+    "light": "#095fd9",
+    "dark": "#2281fa"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "/favicon.png",
+  "logo": {
+    "light": "/logo-light.png",
+    "dark": "/logo-light.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/AlexCinco5/StudyQuest"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/AlexCinco5/StudyQuest"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Features",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "features/ai-content-generation",
+              "features/flashcards",
+              "features/quizzes",
+              "features/progression-system"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "User Guide",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "guide/creating-worlds",
+              "guide/studying-with-flashcards",
+              "guide/taking-quizzes",
+              "guide/tracking-progress"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Architecture",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "architecture/overview",
+              "architecture/clean-architecture",
+              "architecture/state-management",
+              "architecture/backend-worker"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Development",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Setup",
             "pages": [
-              "api-reference/introduction"
+              "dev/environment-setup",
+              "dev/flutter-setup",
+              "dev/supabase-configuration"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Features",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "dev/authentication",
+              "dev/document-management",
+              "dev/level-system",
+              "dev/notification-service"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "dev/backend/worker-setup",
+              "dev/backend/ai-integration",
+              "dev/backend/pdf-processing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Features",
+            "pages": [
+              "api/auth/overview",
+              "api/auth/repositories",
+              "api/auth/bloc",
+              "api/home/overview",
+              "api/home/repositories",
+              "api/home/bloc"
+            ]
+          },
+          {
+            "group": "Core Services",
+            "pages": [
+              "api/core/theme",
+              "api/core/notifications",
+              "api/core/dependency-injection"
+            ]
+          },
+          {
+            "group": "Domain Entities",
+            "pages": [
+              "api/entities/user",
+              "api/entities/document",
+              "api/entities/level",
+              "api/entities/flashcard",
+              "api/entities/quiz"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

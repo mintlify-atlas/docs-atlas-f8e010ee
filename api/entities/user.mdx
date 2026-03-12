@@ -1,0 +1,140 @@
+---
+title: 'UserEntity'
+description: 'Represents an authenticated user in StudyQuest'
+---
+
+## Overview
+
+The `UserEntity` class represents an authenticated user in the StudyQuest application. It extends `Equatable` for value comparison and contains core user identification and profile information.
+
+**Source:** `lib/features/auth/domain/entities/user_entity.dart:3`
+
+## Properties
+
+<ParamField path="id" type="String" required>
+  Unique identifier for the user
+</ParamField>
+
+<ParamField path="email" type="String" required>
+  User's email address used for authentication
+</ParamField>
+
+<ParamField path="username" type="String" required>
+  Display name for the user
+</ParamField>
+
+<ParamField path="avatarUrl" type="String?">
+  Optional URL to the user's avatar image. Can be null if no avatar is set.
+</ParamField>
+
+## Entity Structure
+
+```dart
+class UserEntity extends Equatable {
+  final String id;
+  final String email;
+  final String username;
+  final String? avatarUrl;
+
+  const UserEntity({
+    required this.id,
+    required this.email,
+    required this.username,
+    this.avatarUrl,
+  });
+
+  @override
+  List<Object?> get props => [id, email, username, avatarUrl];
+}
+```
+
+## Model Conversion
+
+### UserModel
+
+The `UserModel` class extends `UserEntity` and provides conversion methods for Supabase integration.
+
+**Source:** `lib/features/auth/data/models/user_model.dart:4`
+
+#### From Supabase User
+
+Converts a Supabase `User` object to a `UserModel`:
+
+```dart
+factory UserModel.fromSupabaseUser(User user) {
+  return UserModel(
+    id: user.id,
+    email: user.email ?? '',
+    username: user.userMetadata?['username'] ?? 'Estudiante',
+    avatarUrl: user.userMetadata?['avatar_url'],
+  );
+}
+```
+
+<Note>
+  The username and avatarUrl are stored in Supabase's `user_metadata` field.
+</Note>
+
+#### From JSON
+
+Converts a JSON map to a `UserModel` (useful for caching or testing):
+
+```dart
+factory UserModel.fromJson(Map<String, dynamic> json) {
+  return UserModel(
+    id: json['id'],
+    email: json['email'],
+    username: json['username'],
+    avatarUrl: json['avatar_url'],
+  );
+}
+```
+
+## Usage in Repositories
+
+### AuthRepository
+
+**Source:** `lib/features/auth/domain/repositories/auth_repository.dart:17`
+
+The `UserEntity` is returned by authentication methods:
+
+```dart
+abstract class AuthRepository {
+  // Returns Either a Failure (left) or a UserEntity (right)
+  Future<Either<Failure, UserEntity>> loginWithEmail({
+    required String email,
+    required String password,
+  });
+
+  Future<Either<Failure, UserEntity>> registerWithEmail({
+    required String email,
+    required String password,
+    required String username,
+  });
+}
+```
+
+## Usage in Blocs
+
+### AuthState
+
+**Source:** `lib/features/auth/presentation/bloc/auth_state.dart:15`
+
+The authenticated user is stored in the `Authenticated` state:
+
+```dart
+class Authenticated extends AuthState {
+  final UserEntity user;
+
+  const Authenticated(this.user);
+
+  @override
+  List<Object> get props => [user];
+}
+```
+
+## Relationships
+
+- **Profile**: Each user has an associated `ProfileEntity` that tracks XP, level, and progress
+- **Documents**: Users can own multiple `DocumentEntity` instances (uploaded study materials)
+- **Authentication**: Used throughout the auth feature for login, registration, and session management

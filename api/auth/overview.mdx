@@ -1,0 +1,150 @@
+---
+title: 'Auth Feature Overview'
+description: 'Authentication feature architecture and components for StudyQuest'
+icon: 'shield-halved'
+---
+
+## Overview
+
+The Auth feature implements user authentication and profile management in StudyQuest. It follows Clean Architecture principles with clear separation between domain, data, and presentation layers.
+
+## Architecture
+
+The Auth feature is organized into three main layers:
+
+### Domain Layer
+Defines the core business logic and contracts:
+- **Entities**: `UserEntity`, `ProfileEntity`
+- **Repositories**: `AuthRepository` (abstract contract)
+
+### Data Layer
+Implements data fetching and storage:
+- **Data Sources**: `AuthRemoteDataSource`
+- **Models**: `UserModel`
+- **Repository Implementation**: `AuthRepositoryImpl`
+
+### Presentation Layer
+Handles UI state and user interactions:
+- **BLoC**: `AuthBloc` with events and states
+- **Pages**: `LoginPage`, `RegisterPage`, `WelcomePage`
+
+## Core Entities
+
+### UserEntity
+
+Represents an authenticated user in the application.
+
+<ParamField path="id" type="String" required>
+  Unique identifier for the user
+</ParamField>
+
+<ParamField path="email" type="String" required>
+  User's email address
+</ParamField>
+
+<ParamField path="username" type="String" required>
+  User's display name
+</ParamField>
+
+<ParamField path="avatarUrl" type="String?">
+  Optional URL to user's avatar image
+</ParamField>
+
+### ProfileEntity
+
+Represents a user's gamification profile with XP and streak data.
+
+<ParamField path="id" type="String" required>
+  Unique identifier matching the user ID
+</ParamField>
+
+<ParamField path="username" type="String?">
+  Optional username from profile
+</ParamField>
+
+<ParamField path="avatarUrl" type="String?">
+  Optional avatar URL
+</ParamField>
+
+<ParamField path="totalXp" type="int" required>
+  Total experience points accumulated by the user
+</ParamField>
+
+<ParamField path="currentStreak" type="int" required>
+  Current daily streak count
+</ParamField>
+
+## Usage Example
+
+<CodeGroup>
+
+```dart Entity Usage
+import 'package:study_quest/features/auth/domain/entities/user_entity.dart';
+import 'package:study_quest/features/auth/domain/entities/profile_entity.dart';
+
+// Creating a user entity
+final user = UserEntity(
+  id: 'user_123',
+  email: 'student@example.com',
+  username: 'StudentOne',
+  avatarUrl: 'https://example.com/avatar.jpg',
+);
+
+// Creating a profile entity from API response
+final profile = ProfileEntity.fromMap({
+  'id': 'user_123',
+  'username': 'StudentOne',
+  'avatar_url': 'https://example.com/avatar.jpg',
+  'total_xp': 1500,
+  'current_streak': 7,
+});
+
+// Accessing profile data
+print('Level: ${profile.totalXp ~/ 100}');
+print('Streak: ${profile.currentStreak} days');
+```
+
+```dart With BLoC
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:study_quest/features/auth/presentation/bloc/auth_bloc.dart';
+
+// Listening to auth state
+BlocBuilder<AuthBloc, AuthState>(
+  builder: (context, state) {
+    if (state is AuthSuccess) {
+      final user = state.user;
+      return Text('Welcome, ${user.username}!');
+    }
+    return const CircularProgressIndicator();
+  },
+)
+```
+
+</CodeGroup>
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Email Authentication" icon="envelope">
+    Login and registration with email/password
+  </Card>
+  <Card title="Profile Management" icon="user">
+    User profile with XP and streak tracking
+  </Card>
+  <Card title="State Management" icon="arrows-rotate">
+    BLoC pattern for reactive state handling
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation">
+    Functional error handling with Either type
+  </Card>
+</CardGroup>
+
+## Related Pages
+
+<Card title="Auth Repository" icon="database" href="/api/auth/repositories">
+  Learn about repository methods and contracts
+</Card>
+
+<Card title="Auth BLoC" icon="diagram-project" href="/api/auth/bloc">
+  Explore events, states, and state management
+</Card>

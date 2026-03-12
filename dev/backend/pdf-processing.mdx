@@ -1,0 +1,440 @@
+---
+title: 'PDF Processing'
+description: 'Text extraction, chunking strategies, and PDF handling in the StudyQuest backend'
+---
+
+## Overview
+
+The PDF processing pipeline extracts all text from uploaded documents and prepares it for AI analysis. StudyQuest uses **PyPDF** for text extraction and implements a custom chunking strategy optimized for Google Gemini's context window.
+
+## Text Extraction
+
+### Full Document Extraction (worker.py:27-44)
+
+The worker downloads and extracts text from **all pages** of the PDF:
+
+```python
+def extract_all_text_from_pdf(url):
+    print(f"   ⬇️ Descargando PDF completo: {url}...")
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception("Error al descargar PDF desde Supabase Storage")
+    
+    print("   📖 Leyendo PDF...")
+    f = BytesIO(response.content)
+    reader = PdfReader(f)
+    
+    full_text = ""
+    # Ahora leemos TODAS las páginas
+    for page in reader.pages:
+        text = page.extract_text()
+        if text:
+            full_text += text + "\n"
+            
+    return full_text
+```
+
+### Key Features
+
+1. **Streaming Download:** Uses `BytesIO` to avoid writing to disk
+2. **Complete Extraction:** Iterates through all pages without limit
+3. **Newline Preservation:** Maintains page boundaries with `\n`
+4. **Error Handling:** Raises exception if PDF download fails
+
+<Warning>
+  This function loads the **entire PDF** into memory. For very large documents (>1000 pages), consider implementing pagination or streaming extraction.
+</Warning>
+
+## PDF Storage Architecture
+
+PDFs are stored in **Supabase Storage** and referenced by URL:
+
+```
+https://your-project.supabase.co/storage/v1/object/public/documents/user-uuid/document-uuid.pdf
+```
+
+The `file_url` is stored in the `documents` table:
+
+```sql
+CREATE TABLE documents (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(id),
+    file_url TEXT NOT NULL,  -- Supabase Storage URL
+    status TEXT DEFAULT 'processing',
+    ...
+);
+```
+
+### Storage Security
+
+<Note>
+  Ensure your Supabase Storage bucket has appropriate RLS policies. The worker needs **read access** to download PDFs.
+</Note>
+
+## Chunking Strategy
+
+### Why Chunking?
+
+Large PDFs exceed AI model context windows. Chunking divides the document into manageable pieces that can be processed sequentially.
+
+### Implementation (worker.py:150-154)
+
+```python
+# CHUNKING (Dividir el texto)
+chunk_size = 25000 
+chunks = [full_text[i:i+chunk_size] for i in range(0, len(full_text), chunk_size)]
+
+print(f"   ✂️ Documento dividido en {len(chunks)} bloques lógicos.")
+```
+
+### Chunk Size Analysis
+
+**Why 25,000 characters?**
+
+- **Token Estimation:** ~25,000 chars = ~6,250 tokens (4:1 ratio for Spanish/English)
+- **Gemini Context Window:** 32,768 tokens for gemini-2.5-flash
+- **Prompt Overhead:** ~1,000 tokens for prompt instructions
+- **Safety Margin:** Leaves room for AI response (~500 tokens)
+
+```
+25,000 chars input
++ 1,000 chars prompt
++ 2,000 chars AI response
+= ~7,000 tokens total (well within 32k limit)
+```
+
+<Note>
+  Adjust `chunk_size` if you switch models. Gemini 1.5 Pro has a 1M token context, allowing chunks up to 500,000 characters.
+</Note>
+
+## Sequential Processing
+
+Chunks are processed one at a time with rate limiting:
+
+```python worker.py:160-163
+for i, chunk in enumerate(chunks):
+    if i > 0: time.sleep(2)  # Delay between chunks
+    
+    ai_data = generate_content_for_chunk(chunk, i + 1)
+```
+
+### Why Sequential?
+
+1. **Rate Limiting:** Prevents API quota exhaustion
+2. **Memory Efficiency:** Processes one chunk at a time
+3. **Error Isolation:** One chunk failure doesn't block others
+4. **Progress Tracking:** Clear logging of which chunk is processing
+
+<Warning>
+  Do NOT process chunks in parallel. This will quickly exhaust Gemini API quotas and may cause all requests to fail.
+</Warning>
+
+## Chunk Boundary Issues
+
+### Problem: Mid-Sentence Splits
+
+Simple character-based chunking can split in the middle of sentences or concepts:
+
+```
+Chunk 1: "...and the OSI model has seven layers. The physical la"
+Chunk 2: "yer handles bit transmission over physical media..."
+```
+
+### Current Approach: AI Handles It
+
+Gemini is instructed to extract concepts from "this section specifically" and is robust to incomplete sentences at boundaries.
+
+### Advanced Alternative: Smart Chunking
+
+For production systems, consider chunking on paragraph/section boundaries:
+
+```python
+def smart_chunk(text, max_size=25000):
+    paragraphs = text.split('\n\n')
+    chunks = []
+    current_chunk = ""
+    
+    for para in paragraphs:
+        if len(current_chunk) + len(para) > max_size:
+            chunks.append(current_chunk)
+            current_chunk = para
+        else:
+            current_chunk += para + "\n\n"
+    
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    return chunks
+```
+
+This preserves semantic boundaries and improves AI comprehension.
+
+## Handling Edge Cases
+
+### Empty PDFs (worker.py:142-143)
+
+```python
+if not full_text.strip():
+    raise Exception("El PDF parece estar vacío o ser un PDF escaneado sin OCR.")
+```
+
+Prevents processing documents with no extractable text.
+
+### Scanned PDFs (Images)
+
+PyPDF **cannot extract text from scanned images**. Users must:
+
+1. Use OCR tools (Tesseract, Adobe Acrobat) before uploading
+2. OR upload text-based PDFs only
+
+<Warning>
+  Add a frontend warning that scanned/image PDFs are not supported, or integrate an OCR service like Google Cloud Vision API.
+</Warning>
+
+### Special Characters & Encoding
+
+PyPDF handles UTF-8 encoding automatically. Most PDFs work without issues, but some edge cases:
+
+- **Encrypted PDFs:** Require password (not currently supported)
+- **Form Fields:** May not extract text from fillable forms
+- **Annotations:** Comments/highlights are not extracted
+
+## Performance Metrics
+
+### Processing Time Breakdown
+
+For a typical 50-page PDF:
+
+| Step | Time | Notes |
+|------|------|-------|
+| Download PDF | 2-5s | Depends on file size and network |
+| Extract text | 1-3s | Fast with PyPDF |
+| Generate global context | 5-8s | AI processing |
+| Chunk creation | Less than 1s | Simple string slicing |
+| Process chunk 1 | 6-10s | AI generation |
+| Process chunk 2 | 6-10s | Plus 2s rate limit delay |
+| Save to database | 2-4s | Multiple inserts |
+| **Total** | **30-60s** | For 50-page document |
+
+### Scaling Considerations
+
+- **Large documents (>200 pages):** May take 3-5 minutes
+- **Multiple documents:** Processed sequentially (one worker)
+- **Parallel processing:** Deploy multiple workers polling the queue
+
+## Memory Usage
+
+The worker holds the entire PDF text in memory:
+
+```python
+full_text = extract_all_text_from_pdf(doc['file_url'])
+# full_text can be several MB for large documents
+```
+
+### Memory Estimates
+
+| PDF Size | Extracted Text | Memory Usage |
+|----------|----------------|---------------|
+| 10 pages | ~50 KB | Negligible |
+| 100 pages | ~500 KB | Low |
+| 500 pages | ~2.5 MB | Moderate |
+| 1000 pages | ~5 MB | High |
+
+<Note>
+  For very large documents, consider streaming extraction by processing pages in batches instead of loading all text at once.
+</Note>
+
+## Error Recovery
+
+PDF processing errors are logged and the document is marked as `error`:
+
+```python worker.py:223-229
+except Exception as e:
+    print(f"❌ Error crítico procesando documento {doc_id}: {e}")
+    traceback.print_exc() 
+    try:
+        supabase.table('documents').update({'status': 'error'}).eq('id', doc_id).execute()
+    except:
+        pass
+```
+
+Common errors:
+
+- `Error al descargar PDF` → Invalid URL or storage permissions
+- `El PDF parece estar vacío` → Scanned PDF without OCR
+- `HTTP 404` → File deleted from storage before processing
+
+## Optimization Strategies
+
+### 1. Lazy Loading for Large PDFs
+
+Process pages in batches instead of loading all at once:
+
+```python
+def extract_text_lazy(url, pages_per_batch=50):
+    response = requests.get(url)
+    f = BytesIO(response.content)
+    reader = PdfReader(f)
+    
+    total_pages = len(reader.pages)
+    
+    for start in range(0, total_pages, pages_per_batch):
+        batch_text = ""
+        for i in range(start, min(start + pages_per_batch, total_pages)):
+            batch_text += reader.pages[i].extract_text()
+        
+        yield batch_text
+```
+
+### 2. Parallel Workers
+
+Deploy multiple worker instances to process documents concurrently:
+
+```bash
+# Start 3 worker processes
+python worker.py &
+python worker.py &
+python worker.py &
+```
+
+Each worker polls for `status = 'processing'` documents independently.
+
+### 3. Priority Queue
+
+Add a `priority` column to process urgent documents first:
+
+```python
+response = supabase.table('documents')
+    .select("*")
+    .eq('status', 'processing')
+    .order('priority', desc=True)
+    .limit(1)
+    .execute()
+```
+
+### 4. Caching Extracted Text
+
+Store extracted text in a separate `document_text` table to avoid re-extracting if processing fails:
+
+```sql
+CREATE TABLE document_text (
+    document_id UUID PRIMARY KEY REFERENCES documents(id),
+    full_text TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+Modify worker to check cache first:
+
+```python
+# Check if text already extracted
+cached = supabase.table('document_text').select('full_text').eq('document_id', doc_id).execute()
+if cached.data:
+    full_text = cached.data[0]['full_text']
+else:
+    full_text = extract_all_text_from_pdf(doc['file_url'])
+    supabase.table('document_text').insert({'document_id': doc_id, 'full_text': full_text}).execute()
+```
+
+## Alternative PDF Libraries
+
+### PyPDF (Current)
+
+✅ Pros:
+- Pure Python, easy to install
+- Fast text extraction
+- Good for standard PDFs
+
+❌ Cons:
+- No OCR support
+- Limited handling of complex layouts
+
+### pdfplumber
+
+```bash
+pip install pdfplumber
+```
+
+```python
+import pdfplumber
+
+with pdfplumber.open(f) as pdf:
+    full_text = ""
+    for page in pdf.pages:
+        full_text += page.extract_text()
+```
+
+✅ Pros:
+- Better table extraction
+- More layout-aware
+
+❌ Cons:
+- Slower than PyPDF
+- Heavier dependencies
+
+### PyMuPDF (fitz)
+
+```bash
+pip install pymupdf
+```
+
+```python
+import fitz
+
+doc = fitz.open(stream=response.content, filetype="pdf")
+for page in doc:
+    full_text += page.get_text()
+```
+
+✅ Pros:
+- Very fast
+- Better handling of scanned PDFs
+
+❌ Cons:
+- Requires compiled binaries
+
+## Testing PDF Processing
+
+Create a test script to validate extraction:
+
+```python test_pdf.py
+from worker import extract_all_text_from_pdf
+
+# Test with a sample PDF URL
+test_url = "https://your-project.supabase.co/storage/v1/object/public/documents/test.pdf"
+
+try:
+    text = extract_all_text_from_pdf(test_url)
+    print(f"✅ Extracted {len(text)} characters")
+    print(f"First 500 chars: {text[:500]}")
+except Exception as e:
+    print(f"❌ Extraction failed: {e}")
+```
+
+Run with:
+
+```bash
+python test_pdf.py
+```
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| No text extracted | Scanned PDF (images only) | Use OCR tool or upload text-based PDF |
+| Garbled characters | Encoding issues | Check PDF uses standard fonts, not embedded images |
+| Missing text | PDF uses complex layouts | Try alternative library (pdfplumber) |
+| Download fails | Invalid file_url | Verify Supabase Storage bucket and URL format |
+| Memory errors | PDF too large | Implement lazy loading or increase worker RAM |
+| Slow extraction | Heavy PDF with images | Normal behavior, PDFs with many images take longer |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Worker Setup" icon="gear" href="/dev/backend/worker-setup">
+    Configure and deploy the Python worker
+  </Card>
+  <Card title="AI Integration" icon="brain" href="/dev/backend/ai-integration">
+    Learn how extracted text is processed by AI
+  </Card>
+</CardGroup>

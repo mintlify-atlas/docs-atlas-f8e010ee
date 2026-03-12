@@ -1,80 +1,293 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quickstart Guide'
+description: 'Get started with StudyQuest in 7 simple steps'
+icon: 'rocket'
 ---
 
-## Get started in three steps
+Welcome to StudyQuest! This guide will walk you through creating your first AI-powered study world from a PDF document.
 
-Get your documentation site running locally and make your first customization.
+## What You'll Learn
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+By the end of this guide, you'll know how to:
+- Create a StudyQuest account
+- Upload your first PDF document
+- Study with AI-generated flashcards
+- Test your knowledge with quizzes
+- Earn XP and track your progress
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Before you start:** Make sure you have the StudyQuest app installed. See the [Installation Guide](/installation) for platform-specific instructions.
 </Note>
+
+## Step-by-Step Walkthrough
+
+<Steps>
+  <Step title="Create Your Account">
+    Launch the StudyQuest app and tap **Register** to create a new account.
+    
+    ```dart
+    // From register_page.dart:45-60
+    TextFormField(
+      decoration: InputDecoration(labelText: "Email"),
+      validator: (value) {
+        if (value == null || !value.contains('@')) {
+          return 'Please enter a valid email';
+        }
+        return null;
+      },
+    ),
+    TextFormField(
+      decoration: InputDecoration(labelText: "Password"),
+      obscureText: true,
+      validator: (value) {
+        if (value == null || value.length < 6) {
+          return 'Password must be at least 6 characters';
+        }
+        return null;
+      },
+    ),
+    ```
+    
+    Requirements:
+    - Valid email address
+    - Password at least 6 characters long
+    - Username (optional but recommended)
+    
+    <Note>
+      Your account is created using Supabase authentication, which automatically creates a profile with initial XP of 0 and a streak counter.
+    </Note>
+  </Step>
+
+  <Step title="Upload Your First PDF">
+    From the home screen, tap the **"Nuevo Mundo PDF"** button and select a PDF from your device.
+    
+    ```dart
+    // From home_page.dart:33-45
+    Future<void> _pickAndUploadFile(BuildContext context) async {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        final file = File(result.files.single.path!);
+        final fileName = result.files.single.name;
+        
+        context.read<HomeBloc>().add(UploadDocumentRequested(file, fileName));
+      }
+    }
+    ```
+    
+    <Tip>
+      **Best PDFs for study worlds:**
+      - Lecture notes or textbook chapters
+      - Study guides or summaries
+      - Research papers
+      - Any text-heavy educational content
+    </Tip>
+    
+    What happens next:
+    1. The PDF is uploaded to Supabase Storage
+    2. A document record is created with status `processing`
+    3. The backend worker detects the new document
+    4. AI begins generating flashcards and quizzes
+  </Step>
+
+  <Step title="Wait for AI Processing">
+    Your uploaded PDF will show a **"Creando lecciones..."** status with a spinner. This typically takes 30-60 seconds for a 50-page document.
+    
+    The AI is:
+    - Extracting text from your PDF
+    - Identifying key concepts
+    - Generating relevant flashcards
+    - Creating challenging quiz questions
+    - Organizing content into study levels
+    
+    <Warning>
+      Don't close the app during processing! While the backend worker runs independently, it's best to keep the app open to see when your world is ready.
+    </Warning>
+    
+    When processing completes, the status changes to `ready` and the world card becomes interactive.
+  </Step>
+
+  <Step title="Enter Your Study World">
+    Once processing is complete, tap on your world card to open the **Level Map**. You'll see a vertical path of circular level nodes.
+    
+    ```dart
+    // From level_map_page.dart:85-110
+    ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 40),
+      itemCount: levels.length + 1,
+      itemBuilder: (context, index) {
+        if (index == levels.length) {
+          return _buildPathItem(/* Trophy at the end */);
+        }
+        
+        final level = levels[index];
+        return _buildLevelNode(
+          level: level,
+          isLeft: index % 2 == 0, // Zigzag pattern
+        );
+      },
+    )
+    ```
+    
+    Levels are unlocked sequentially:
+    - 🎴 **Flashcards**: Learn key concepts (10 XP)
+    - ❓ **Quiz**: Test your knowledge (20 XP)
+    - 🏆 **Meta Final**: Complete all levels
+  </Step>
+
+  <Step title="Study with Flashcards">
+    Tap on a flashcard level to start learning. The system uses **spaced repetition** for optimal retention.
+    
+    **How flashcards work:**
+    - Tap the card to flip and see the answer
+    - Text-to-speech reads the back automatically (in Spanish)
+    - Choose **"Lo sé"** if you know it (removes from queue)
+    - Choose **"Repasar"** to review later (goes to back of queue)
+    
+    ```dart
+    // From flashcards_page.dart:104-119
+    void _markAsLearned() {
+      _flutterTts.stop();
+      _cardsQueue.removeFirst(); // Remove permanently
+      _moveToNextCard();
+    }
+
+    void _markForReview() {
+      _flutterTts.stop();
+      final currentCard = _cardsQueue.removeFirst();
+      _cardsQueue.addLast(currentCard); // Send to back
+      _moveToNextCard();
+    }
+    ```
+    
+    <Tip>
+      **Study strategy**: Be honest! Marking cards you don't know as "Lo sé" will hurt your retention. The spaced repetition algorithm works best when you're accurate.
+    </Tip>
+    
+    Complete all cards to earn **+10 XP** and unlock the next level.
+  </Step>
+
+  <Step title="Take a Quiz">
+    Quiz levels test your knowledge with multiple-choice questions. You have **3 lives** (hearts).
+    
+    **Quiz mechanics:**
+    - Tap an option to answer
+    - Correct answers show in green
+    - Wrong answers show in red (lose 1 heart)
+    - Get explanations for each question
+    - Sound effects play for correct/wrong answers
+    
+    ```dart
+    // From quiz_page.dart:98-126
+    void _checkAnswer(int selectedIndex) {
+      final isCorrectNow = (selectedIndex == currentQ.correctIndex);
+      
+      setState(() {
+        _isCorrect = isCorrectNow;
+        _currentReaction = isCorrectNow 
+          ? AvatarReaction.success 
+          : AvatarReaction.fail;
+      });
+      
+      _playSound(isCorrectNow);
+      
+      if (!isCorrectNow) {
+        setState(() { _lives--; });
+        if (_lives <= 0) {
+          _showGameOverDialog();
+          return;
+        }
+      }
+    }
+    ```
+    
+    <Warning>
+      **Game over:** If you lose all 3 hearts, the quiz ends and you must restart. No XP is awarded for incomplete quizzes.
+    </Warning>
+    
+    Complete the quiz to earn **+20 XP** (double the flashcard reward).
+  </Step>
+
+  <Step title="Track Your Progress">
+    Check your stats on the home screen:
+    
+    - 🔥 **Streak**: Days in a row you've completed levels
+    - 💎 **XP**: Total experience points earned
+    
+    Tap your profile icon to see:
+    - Total XP across all worlds
+    - Current streak count
+    - Achievements and milestones
+    - Learning statistics
+    
+    <Note>
+      **Daily streak tip**: Complete at least one level per day to maintain your streak. You'll receive a notification at 8 PM as a reminder!
+    </Note>
+  </Step>
+</Steps>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="User Guide" icon="book-open" href="/guide/creating-worlds">
+    Learn advanced study strategies and world management
+  </Card>
+  <Card title="Core Features" icon="sparkles" href="/features/ai-content-generation">
+    Explore how AI generates your study content
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/overview">
+    Dive into the technical implementation
+  </Card>
+  <Card title="Development" icon="hammer" href="/dev/environment-setup">
+    Set up your development environment
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="My PDF is stuck on 'processing' status">
+    This can happen if:
+    - The PDF is very large (>100 pages)
+    - The backend worker is offline
+    - The AI service is rate-limited
+    
+    **Solution**: Wait 5 minutes and pull down to refresh the home screen. If still stuck, check that the backend worker is running.
+  </Accordion>
+  
+  <Accordion title="I can't upload PDFs on web/desktop">
+    File picker permissions vary by platform. On web, make sure to:
+    - Allow file access when prompted
+    - Use a modern browser (Chrome, Firefox, Safari)
+    - Check that the PDF is under 50MB
+  </Accordion>
+  
+  <Accordion title="Flashcard audio doesn't play">
+    Text-to-speech requires:
+    - Device audio enabled
+    - Spanish (es-MX) language pack installed
+    - Internet connection for first-time voice download
+    
+    On iOS, go to Settings → Accessibility → Spoken Content to download Spanish voices.
+  </Accordion>
+  
+  <Accordion title="My streak reset even though I studied yesterday">
+    Streaks are timezone-dependent. Make sure to:
+    - Complete at least one level before midnight in your timezone
+    - Check that your device time/date is correct
+    - Enable notifications so you get reminded at 8 PM
+  </Accordion>
+</AccordionGroup>
+
+## Need Help?
+
+<Card
+  title="View Documentation"
+  icon="book"
+  href="/introduction"
+>
+  Return to the full documentation for detailed guides and API reference
+</Card>

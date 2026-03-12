@@ -1,0 +1,652 @@
+---
+title: 'Backend Worker Architecture'
+description: 'Understanding the AI-powered content generation pipeline'
+icon: 'robot'
+---
+
+## Overview
+
+The StudyQuest backend worker is a Python-based service that processes uploaded PDF documents and generates study content using Google's Gemini AI. It runs independently from the Flutter app and monitors Supabase for new documents to process.
+
+## Worker Responsibilities
+
+<CardGroup cols={2}>
+  <Card title="PDF Processing" icon="file-pdf">
+    Download and extract text from PDF documents stored in Supabase Storage
+  </Card>
+  
+  <Card title="AI Content Generation" icon="brain">
+    Analyze text with Gemini AI to create flashcards, quizzes, and study topics
+  </Card>
+  
+  <Card title="Database Management" icon="database">
+    Save generated content to Supabase tables and update document status
+  </Card>
+  
+  <Card title="Queue Processing" icon="list-check">
+    Continuously monitor for new documents and process them in order
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+| Technology | Purpose | Version |
+|------------|---------|----------|
+| **Python** | Programming language | 3.x |
+| **Google Gemini AI** | Content generation | gemini-2.5-flash |
+| **Supabase Python Client** | Database and storage integration | Latest |
+| **pypdf** | PDF text extraction | Latest |
+| **python-dotenv** | Environment variable management | Latest |
+| **requests** | HTTP requests for file downloads | Latest |
+
+## Worker Architecture
+
+**File**: `backend/worker.py:1`
+
+### Main Loop
+
+The worker runs in an infinite loop, checking for documents to process:
+
+```python
+def main():
+    print("🤖 StudyQuest AI Worker (V4 - Auto-Naming) started...")
+    print("Waiting for documents in queue...")
+    
+    while True:
+        try:
+            # Query Supabase for documents with status='processing'
+            response = supabase.table('documents').select("*").eq('status', 'processing').execute()
+            documents = response.data if hasattr(response, 'data') else response
+            
+            if documents and len(documents) > 0:
+                for doc in documents:
+                    process_document(doc)
+            else:
+                time.sleep(5)  # Wait 5 seconds before checking again
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+            time.sleep(10)
+
+if __name__ == "__main__":
+    main()
+```
+
+**Key Points**:
+- Continuously polls database for new work
+- Processes documents one at a time
+- Recovers from errors and continues running
+- 5-second delay between checks when idle
+
+## Processing Pipeline
+
+When a document is found with `status='processing'`, the worker executes the following pipeline:
+
+<Steps>
+  <Step title="Download PDF">
+    Fetch the PDF file from Supabase Storage using the `file_url`
+    
+    ```python
+    def extract_all_text_from_pdf(url):
+        print(f"   ⬇️ Downloading PDF: {url}...")
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            raise Exception("Error downloading PDF from Supabase Storage")
+        
+        return response.content
+    ```
+  </Step>
+  
+  <Step title="Extract Text">
+    Use pypdf to extract all text from the PDF
+    
+    ```python
+    print("   📖 Reading PDF...")
+    f = BytesIO(response.content)
+    reader = PdfReader(f)
+    
+    full_text = ""
+    for page in reader.pages:
+        text = page.extract_text()
+        if text:
+            full_text += text + "\n"
+    
+    if not full_text.strip():
+        raise Exception("PDF appears empty or is a scanned PDF without OCR")
+    ```
+  </Step>
+  
+  <Step title="Generate Global Context">
+    Use AI to create a title and summary for the document
+    
+    ```python
+    def generate_global_context(full_text):
+        print("   📝 Generating short title and global summary...")
+        
+        prompt = f"""
+        Read the beginning and end of this document.
+        1. Create a short, epic, attractive title (max 4 words) for this study "world".
+        2. Write a motivating 2-3 sentence summary.
+        
+        Return ONLY JSON with this exact format:
+        {{
+            "short_title": "World Short Name",
+            "summary": "Motivating summary of what will be learned."
+        }}
+        
+        Document start:
+        {full_text[:4000]}
+        
+        ...
+        
+        Document end:
+        {full_text[-4000:]}
+        """
+        
+        response = model.generate_content(prompt)
+        # Clean and parse JSON response
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        start_idx = clean_text.find('{')
+        end_idx = clean_text.rfind('}') + 1
+        
+        return json.loads(clean_text[start_idx:end_idx])
+    ```
+  </Step>
+  
+  <Step title="Chunk Text">
+    Split the text into manageable chunks (25,000 characters each)
+    
+    ```python
+    chunk_size = 25000
+    chunks = [full_text[i:i+chunk_size] for i in range(0, len(full_text), chunk_size)]
+    print(f"   ✂️ Document divided into {len(chunks)} logical blocks.")
+    ```
+  </Step>
+  
+  <Step title="Generate Content for Each Chunk">
+    Process each chunk with AI to extract topics, flashcards, and quizzes
+    
+    ```python
+    def generate_content_for_chunk(chunk_text, chunk_index):
+        print(f"   🧠 AI Analyzing block {chunk_index}...")
+        
+        prompt = f"""
+        Act as a rigorous university professor. Analyze this section from study material.
+        
+        --- SECTION START ---
+        {chunk_text}
+        --- SECTION END ---
+        
+        Extract key concepts and create study material.
+        Create 1-3 Topics depending on information density.
+        
+        Strict JSON rules:
+        1. If no relevant info (e.g., index or bibliography), return "topics": []
+        2. Each topic must have 3-5 flashcards with CRUCIAL concepts
+        3. Each topic must have 2-4 multiple choice quizzes (4 options)
+        4. Quiz options should not be obvious, include believable distractors
+        5. Only respond with pure JSON, no markdown code blocks
+        
+        Expected format:
+        {{
+            "topics": [
+                {{
+                    "title": "Specific Topic Name",
+                    "description": "Brief description",
+                    "flashcards": [
+                        {{"front": "Concept or Direct Question", "back": "Clear definition"}}
+                    ],
+                    "quizzes": [
+                        {{
+                            "question": "Analytical question about topic",
+                            "options": ["A", "B", "C", "D"],
+                            "correct_index": 0,
+                            "explanation": "Why it's correct."
+                        }}
+                    ]
+                }}
+            ]
+        }}
+        """
+        
+        response = model.generate_content(prompt)
+        # Clean AI response
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        start_idx = clean_text.find('{')
+        end_idx = clean_text.rfind('}') + 1
+        clean_text = clean_text[start_idx:end_idx]
+        
+        return json.loads(clean_text)
+    ```
+  </Step>
+  
+  <Step title="Save to Database">
+    Store all generated content in Supabase
+    
+    ```python
+    for index, topic_data in enumerate(all_topics):
+        # Insert topic
+        topic_response = supabase.table('topics').insert({
+            'document_id': doc_id,
+            'title': topic_data['title'],
+            'description': topic_data.get('description', ''),
+            'order_index': index
+        }).execute()
+        
+        topic_id = topic_response.data[0]['id']
+        
+        # Insert flashcards
+        if 'flashcards' in topic_data:
+            flashcards_to_insert = []
+            for fc in topic_data['flashcards']:
+                flashcards_to_insert.append({
+                    'document_id': doc_id,
+                    'topic_id': topic_id,
+                    'front_text': fc['front'],
+                    'back_text': fc['back'],
+                    'mastery_level': 1
+                })
+            if flashcards_to_insert:
+                supabase.table('flashcards').insert(flashcards_to_insert).execute()
+        
+        # Insert quizzes
+        if 'quizzes' in topic_data:
+            quizzes_to_insert = []
+            for q in topic_data['quizzes']:
+                quizzes_to_insert.append({
+                    'document_id': doc_id,
+                    'topic_id': topic_id,
+                    'question_text': q['question'],
+                    'options': q['options'],
+                    'correct_answer_index': q['correct_index'],
+                    'explanation': q.get('explanation', '')
+                })
+            if quizzes_to_insert:
+                supabase.table('quizzes').insert(quizzes_to_insert).execute()
+    ```
+  </Step>
+  
+  <Step title="Update Document Status">
+    Mark document as ready and update title
+    
+    ```python
+    print(f"   ✅ Renaming to '{short_title}' and finalizing...")
+    supabase.table('documents').update({
+        'title': short_title,
+        'status': 'ready',
+        'summary_text': global_summary
+    }).eq('id', doc_id).execute()
+    
+    print("🎉 Process completed successfully! World is ready to play.")
+    ```
+  </Step>
+</Steps>
+
+## AI Integration
+
+### Gemini Configuration
+
+```python
+import google.generativeai as genai
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Using gemini-2.5-flash for excellent JSON instruction following
+model = genai.GenerativeModel('gemini-2.5-flash')
+```
+
+**Why gemini-2.5-flash?**
+- Excellent at following structured JSON instructions
+- Fast response times for real-time processing
+- Cost-effective for high-volume processing
+- Balanced between quality and speed
+
+### Prompt Engineering
+
+The worker uses carefully crafted prompts to ensure consistent, high-quality output:
+
+<Accordion title="Content Generation Prompt Strategy">
+  **Key Elements**:
+  
+  1. **Role Setting**: "Act as a rigorous university professor"
+     - Sets expectation for quality and depth
+  
+  2. **Clear Instructions**: Specific requirements for each element
+     - 3-5 flashcards per topic
+     - 2-4 quizzes per topic
+     - 4 options per quiz with believable distractors
+  
+  3. **Format Specification**: Exact JSON structure expected
+     - Reduces parsing errors
+     - Ensures consistent data structure
+  
+  4. **Edge Case Handling**: Instructions for empty or irrelevant content
+     - "If no relevant info, return 'topics': []"
+  
+  5. **Output Constraints**: No markdown formatting
+     - "Only respond with pure JSON, no markdown code blocks"
+</Accordion>
+
+### Response Cleaning
+
+AI responses are cleaned to handle common formatting issues:
+
+```python
+def clean_ai_response(response_text):
+    # Remove markdown code blocks
+    clean_text = response_text.replace("```json", "").replace("```", "").strip()
+    
+    # Sometimes AI adds text before/after JSON
+    start_idx = clean_text.find('{')
+    end_idx = clean_text.rfind('}') + 1
+    
+    if start_idx == -1 or end_idx == 0:
+        raise ValueError("No valid JSON found in AI response")
+    
+    return clean_text[start_idx:end_idx]
+```
+
+## Error Handling
+
+### Document-Level Error Handling
+
+```python
+def process_document(doc):
+    doc_id = doc['id']
+    print(f"\n🚀 Processing document: {doc['title']} ({doc_id})")
+    
+    try:
+        # ... processing logic ...
+        
+    except Exception as e:
+        print(f"❌ Critical error processing document {doc_id}: {e}")
+        traceback.print_exc()  # Print full stack trace for debugging
+        
+        try:
+            # Mark document as failed
+            supabase.table('documents').update({
+                'status': 'error'
+            }).eq('id', doc_id).execute()
+        except:
+            pass  # If even this fails, continue
+```
+
+### Chunk-Level Error Handling
+
+```python
+try:
+    response = model.generate_content(prompt)
+    clean_text = clean_ai_response(response.text)
+    return json.loads(clean_text)
+except Exception as e:
+    print(f"     ⚠️ Warning: AI failed on block {chunk_index}: {e}")
+    return {"topics": []}  # Return empty topics, continue with other chunks
+```
+
+**Strategy**:
+- Chunk failures don't stop the entire document
+- Document failures are marked in database
+- Worker continues processing other documents
+- Full error traces logged for debugging
+
+## Environment Configuration
+
+Create a `.env` file in the `backend/` directory:
+
+```bash
+# Supabase Configuration
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-service-role-key
+
+# Google Gemini AI
+GEMINI_API_KEY=your-gemini-api-key
+```
+
+<Warning>
+  **Security**: Never commit `.env` files to version control. Use service role keys for backend workers, not anon keys.
+</Warning>
+
+## Database Schema
+
+The worker interacts with these Supabase tables:
+
+<CodeGroup>
+```sql documents
+CREATE TABLE documents (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id),
+  title TEXT NOT NULL,
+  file_url TEXT NOT NULL,
+  status TEXT DEFAULT 'processing',  -- 'processing', 'ready', 'error'
+  summary_text TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+```sql topics
+CREATE TABLE topics (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  order_index INTEGER NOT NULL,
+  is_completed BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+```sql flashcards
+CREATE TABLE flashcards (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+  topic_id UUID REFERENCES topics(id) ON DELETE CASCADE,
+  front_text TEXT NOT NULL,
+  back_text TEXT NOT NULL,
+  mastery_level INTEGER DEFAULT 1,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+```sql quizzes
+CREATE TABLE quizzes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+  topic_id UUID REFERENCES topics(id) ON DELETE CASCADE,
+  question_text TEXT NOT NULL,
+  options TEXT[] NOT NULL,  -- Array of 4 options
+  correct_answer_index INTEGER NOT NULL,
+  explanation TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+</CodeGroup>
+
+## Deployment
+
+### Local Development
+
+```bash
+# Navigate to backend directory
+cd backend
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Create .env file with credentials
+cp .env.example .env
+# Edit .env with your keys
+
+# Run worker
+python worker.py
+```
+
+### Production Deployment
+
+<Steps>
+  <Step title="Containerize">
+    Create a Dockerfile:
+    
+    ```dockerfile
+    FROM python:3.11-slim
+    
+    WORKDIR /app
+    
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    
+    COPY worker.py .
+    
+    CMD ["python", "worker.py"]
+    ```
+  </Step>
+  
+  <Step title="Environment Variables">
+    Set environment variables in your hosting platform:
+    - `SUPABASE_URL`
+    - `SUPABASE_KEY`
+    - `GEMINI_API_KEY`
+  </Step>
+  
+  <Step title="Deploy">
+    Deploy to your preferred platform:
+    - Google Cloud Run
+    - AWS ECS
+    - DigitalOcean App Platform
+    - Railway
+    - Render
+  </Step>
+  
+  <Step title="Monitor">
+    Set up logging and monitoring:
+    - Application logs
+    - Error tracking (Sentry, Rollbar)
+    - Performance metrics
+    - AI API usage tracking
+  </Step>
+</Steps>
+
+## Performance Optimization
+
+<CardGroup cols={2}>
+  <Card title="Chunking Strategy" icon="scissors">
+    25,000 character chunks balance AI context limits with processing speed
+  </Card>
+  
+  <Card title="Rate Limiting" icon="hourglass">
+    2-second delay between AI calls prevents rate limit errors
+  </Card>
+  
+  <Card title="Batch Inserts" icon="layer-group">
+    Flashcards and quizzes inserted in batches to reduce database calls
+  </Card>
+  
+  <Card title="Async Processing" icon="arrows-spin">
+    Documents processed asynchronously from mobile app uploads
+  </Card>
+</CardGroup>
+
+## Monitoring and Logging
+
+The worker provides detailed console output:
+
+```
+🤖 StudyQuest AI Worker (V4 - Auto-Naming) started...
+Waiting for documents in queue...
+
+🚀 Processing document: machine_learning.pdf (abc-123-def)
+   ⬇️ Downloading PDF: https://storage.supabase.co/...
+   📖 Reading PDF...
+   📝 Generating short title and global summary...
+   ✂️ Document divided into 4 logical blocks.
+   🧠 AI Analyzing block 1...
+   🧠 AI Analyzing block 2...
+   🧠 AI Analyzing block 3...
+   🧠 AI Analyzing block 4...
+   📑 AI found 12 topics in total. Saving to DB...
+      ✓ Level 'Neural Networks Basics' configured.
+      ✓ Level 'Backpropagation Algorithm' configured.
+      ...
+   ✅ Renaming to 'Machine Learning' and finalizing...
+🎉 Process completed successfully! World is ready to play.
+```
+
+## Future Enhancements
+
+<Accordion title="Parallel Processing">
+  Process multiple documents simultaneously using async/await or multiprocessing
+</Accordion>
+
+<Accordion title="Advanced Chunking">
+  Use semantic chunking based on document structure (chapters, sections) instead of fixed character count
+</Accordion>
+
+<Accordion title="Multi-Modal Content">
+  Extract and analyze images, diagrams, and charts from PDFs
+</Accordion>
+
+<Accordion title="Incremental Updates">
+  Support appending new content to existing documents without full reprocessing
+</Accordion>
+
+<Accordion title="Quality Scoring">
+  Rate generated content quality and regenerate low-quality items
+</Accordion>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Worker Not Processing Documents" icon="circle-exclamation">
+    **Symptoms**: Documents stuck in `processing` status
+    
+    **Solutions**:
+    1. Check worker is running: `ps aux | grep worker.py`
+    2. Verify environment variables are set correctly
+    3. Check Supabase connection (credentials, network)
+    4. Review worker logs for errors
+  </Accordion>
+  
+  <Accordion title="AI Generation Failures" icon="brain">
+    **Symptoms**: Documents marked as `error`, empty topics
+    
+    **Solutions**:
+    1. Verify Gemini API key is valid
+    2. Check API quota and billing
+    3. Review prompts for formatting issues
+    4. Test with smaller documents first
+    5. Check if PDF text extraction succeeded
+  </Accordion>
+  
+  <Accordion title="Database Insert Errors" icon="database">
+    **Symptoms**: Content generated but not appearing in app
+    
+    **Solutions**:
+    1. Verify Supabase service role key permissions
+    2. Check database table schemas match expected format
+    3. Review foreign key constraints
+    4. Check for duplicate entries causing conflicts
+  </Accordion>
+  
+  <Accordion title="Memory Issues" icon="memory">
+    **Symptoms**: Worker crashes on large PDFs
+    
+    **Solutions**:
+    1. Reduce chunk size (currently 25,000 chars)
+    2. Increase worker memory allocation
+    3. Process PDFs in smaller sections
+    4. Clear text variables after processing
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Backend Setup" icon="code" href="/dev/backend/worker-setup">
+    Explore the backend worker setup and configuration
+  </Card>
+  
+  <Card title="Worker Setup" icon="rocket" href="/dev/backend/worker-setup">
+    Learn how to deploy the backend worker to production
+  </Card>
+</CardGroup>

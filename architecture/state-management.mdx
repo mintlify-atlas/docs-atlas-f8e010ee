@@ -1,0 +1,698 @@
+---
+title: 'State Management with BLoC'
+description: 'Understanding the BLoC pattern implementation in StudyQuest'
+icon: 'code-branch'
+---
+
+## What is BLoC?
+
+**BLoC** (Business Logic Component) is a state management pattern that separates business logic from UI. It uses streams to manage state and responds to events.
+
+## Core Concepts
+
+<CardGroup cols={3}>
+  <Card title="Events" icon="circle-arrow-right">
+    User actions or triggers that something should happen
+  </Card>
+  
+  <Card title="BLoC" icon="gear">
+    Processes events and emits new states
+  </Card>
+  
+  <Card title="States" icon="layer-group">
+    Represents the UI's current condition
+  </Card>
+</CardGroup>
+
+## BLoC Flow
+
+<Steps>
+  <Step title="User Interaction">
+    User taps a button or triggers an action in the UI
+  </Step>
+  
+  <Step title="Event Dispatched">
+    UI dispatches an event to the BLoC using `context.read<Bloc>().add(Event())`
+  </Step>
+  
+  <Step title="BLoC Processes Event">
+    BLoC receives event, executes business logic (calls repositories), and prepares new state
+  </Step>
+  
+  <Step title="State Emitted">
+    BLoC emits a new state using `emit(NewState())`
+  </Step>
+  
+  <Step title="UI Rebuilds">
+    `BlocBuilder` or `BlocListener` receives new state and rebuilds UI accordingly
+  </Step>
+</Steps>
+
+## Real Example: AuthBloc
+
+Let's examine the authentication feature to understand BLoC implementation.
+
+### Events
+
+**File**: `lib/features/auth/presentation/bloc/auth_event.dart:1`
+
+```dart
+part of 'auth_bloc.dart';
+
+abstract class AuthEvent extends Equatable {
+  @override
+  List<Object> get props => [];
+}
+
+// Event: User requests login
+class LoginRequested extends AuthEvent {
+  final String email;
+  final String password;
+
+  LoginRequested({
+    required this.email,
+    required this.password,
+  });
+
+  @override
+  List<Object> get props => [email, password];
+}
+
+// Event: User requests registration
+class RegisterRequested extends AuthEvent {
+  final String email;
+  final String password;
+  final String username;
+
+  RegisterRequested({
+    required this.email,
+    required this.password,
+    required this.username,
+  });
+
+  @override
+  List<Object> get props => [email, password, username];
+}
+
+// Event: User logs out
+class LogoutRequested extends AuthEvent {}
+```
+
+**Key Points**:
+- Events are immutable classes
+- Extend `Equatable` for value comparison
+- Carry data needed for the operation
+- Named clearly to indicate intent
+
+### States
+
+**File**: `lib/features/auth/presentation/bloc/auth_state.dart:1`
+
+```dart
+part of 'auth_bloc.dart';
+
+abstract class AuthState extends Equatable {
+  @override
+  List<Object> get props => [];
+}
+
+// Initial state when BLoC is created
+class AuthInitial extends AuthState {}
+
+// State: Authentication in progress
+class AuthLoading extends AuthState {}
+
+// State: Authentication succeeded
+class AuthSuccess extends AuthState {
+  final UserEntity user;
+
+  AuthSuccess(this.user);
+
+  @override
+  List<Object> get props => [user];
+}
+
+// State: Authentication failed
+class AuthFailure extends AuthState {
+  final String message;
+
+  AuthFailure(this.message);
+
+  @override
+  List<Object> get props => [message];
+}
+```
+
+**Key Points**:
+- States represent all possible UI conditions
+- Immutable and extend `Equatable`
+- Carry data needed to render UI
+- Clear naming indicates current status
+
+### BLoC Implementation
+
+**File**: `lib/features/auth/presentation/bloc/auth_bloc.dart:1`
+
+```dart
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:equatable/equatable.dart';
+import '../../domain/entities/user_entity.dart';
+import '../../domain/repositories/auth_repository.dart';
+
+part 'auth_event.dart';
+part 'auth_state.dart';
+
+class AuthBloc extends Bloc<AuthEvent, AuthState> {
+  final AuthRepository authRepository;
+
+  AuthBloc({required this.authRepository}) : super(AuthInitial()) {
+    
+    // Handle login event
+    on<LoginRequested>((event, emit) async {
+      // 1. Emit loading state
+      emit(AuthLoading());
+
+      // 2. Call repository (domain layer)
+      final result = await authRepository.loginWithEmail(
+        email: event.email,
+        password: event.password,
+      );
+
+      // 3. Handle result (Left=Error, Right=Success)
+      result.fold(
+        (failure) => emit(AuthFailure(failure.message)),
+        (user) => emit(AuthSuccess(user)),
+      );
+    });
+
+    // Handle registration event
+    on<RegisterRequested>((event, emit) async {
+      emit(AuthLoading());
+
+      final result = await authRepository.registerWithEmail(
+        email: event.email,
+        password: event.password,
+        username: event.username,
+      );
+
+      result.fold(
+        (failure) => emit(AuthFailure(failure.message)),
+        (user) => emit(AuthSuccess(user)),
+      );
+    });
+  }
+}
+```
+
+**Key Points**:
+- Extends `Bloc<Event, State>`
+- Receives repository via dependency injection
+- Uses `on<EventType>()` to register event handlers
+- Emits states using `emit()`
+- Async operations are properly handled
+
+## Real Example: HomeBloc
+
+The home feature manages document loading and uploads.
+
+**File**: `lib/features/home/presentation/bloc/home_bloc.dart:1`
+
+```dart
+import 'dart:io';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:equatable/equatable.dart';
+import '../../domain/entities/document_entity.dart';
+import '../../domain/repositories/home_repository.dart';
+import '../../../../injection_container.dart' as di;
+import '../../../auth/domain/repositories/auth_repository.dart';
+import '../../../auth/domain/entities/profile_entity.dart';
+
+part 'home_event.dart';
+part 'home_state.dart';
+
+class HomeBloc extends Bloc<HomeEvent, HomeState> {
+  final HomeRepository homeRepository;
+
+  HomeBloc({required this.homeRepository}) : super(HomeInitial()) {
+    
+    // Event: Load documents and user profile
+    on<LoadDocuments>((event, emit) async {
+      emit(HomeLoading());
+      
+      // Fetch documents
+      final result = await homeRepository.getMyDocuments();
+      
+      await result.fold(
+        (failure) async {
+          emit(HomeError(failure.message));
+        },
+        (documents) async {
+          // If documents loaded, fetch user profile
+          final profileResult = await di.sl<AuthRepository>().getCurrentProfile();
+          
+          ProfileEntity? userProfile;
+          profileResult.fold(
+            (fail) => null, 
+            (profile) => userProfile = profile, 
+          );
+          
+          // Emit both documents and profile
+          emit(HomeLoaded(documents, profile: userProfile));
+        }
+      );
+    });
+
+    // Event: Upload new document
+    on<UploadDocumentRequested>((event, emit) async {
+      emit(HomeLoading()); 
+      
+      final result = await homeRepository.uploadDocument(
+        event.file, 
+        event.fileName
+      );
+      
+      result.fold(
+        (failure) => emit(HomeError(failure.message)),
+        (newDoc) {
+          // Reload documents after successful upload
+          add(LoadDocuments()); 
+        },
+      );
+    });
+
+    // Event: Delete document
+    on<DeleteDocumentRequested>((event, emit) async {
+      emit(HomeLoading());
+      
+      final result = await homeRepository.deleteDocument(event.documentId);
+      
+      result.fold(
+        (failure) => emit(HomeError(failure.message)),
+        (_) {
+          // Reload documents after successful deletion
+          add(LoadDocuments()); 
+        },
+      );
+    });
+  }
+}
+```
+
+**Advanced Patterns**:
+- Multiple event handlers in one BLoC
+- Calling another repository (AuthRepository for profile)
+- Self-triggering events (`add(LoadDocuments())`)
+- Chaining operations (upload → reload)
+
+## Real Example: LevelBloc
+
+A simpler BLoC for loading game levels.
+
+**File**: `lib/features/home/presentation/bloc/level_bloc.dart:1`
+
+```dart
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../domain/entities/level_entity.dart';
+import '../../domain/repositories/level_repository.dart';
+
+// Events
+abstract class LevelEvent {}
+
+class LoadLevels extends LevelEvent {
+  final String documentId;
+  LoadLevels(this.documentId);
+}
+
+// States
+abstract class LevelState {}
+
+class LevelInitial extends LevelState {}
+
+class LevelLoading extends LevelState {}
+
+class LevelLoaded extends LevelState {
+  final List<LevelEntity> levels;
+  LevelLoaded(this.levels);
+}
+
+class LevelError extends LevelState {
+  final String message;
+  LevelError(this.message);
+}
+
+// BLoC
+class LevelBloc extends Bloc<LevelEvent, LevelState> {
+  final LevelRepository repository;
+
+  LevelBloc(this.repository) : super(LevelInitial()) {
+    on<LoadLevels>((event, emit) async {
+      emit(LevelLoading());
+      
+      try {
+        final levels = await repository.getLevelsForDocument(event.documentId);
+        emit(LevelLoaded(levels));
+      } catch (e) {
+        emit(LevelError("Error loading levels: $e"));
+      }
+    });
+  }
+}
+```
+
+**Characteristics**:
+- Compact: Events, States, and BLoC in one file
+- Simple error handling with try-catch
+- Single event handler
+- Repository returns data directly (not `Either` type)
+
+## Using BLoC in UI
+
+### BlocProvider
+
+Provides BLoC instance to widget tree:
+
+```dart
+BlocProvider(
+  create: (context) => sl<AuthBloc>(), // From dependency injection
+  child: LoginPage(),
+)
+```
+
+### BlocBuilder
+
+Rebuilds UI when state changes:
+
+```dart
+BlocBuilder<AuthBloc, AuthState>(
+  builder: (context, state) {
+    if (state is AuthLoading) {
+      return CircularProgressIndicator();
+    } else if (state is AuthSuccess) {
+      return Text('Welcome ${state.user.username}!');
+    } else if (state is AuthFailure) {
+      return Text('Error: ${state.message}');
+    }
+    return LoginForm();
+  },
+)
+```
+
+### BlocListener
+
+Performs actions on state changes (navigation, dialogs, etc.):
+
+```dart
+BlocListener<AuthBloc, AuthState>(
+  listener: (context, state) {
+    if (state is AuthSuccess) {
+      Navigator.pushReplacementNamed(context, '/home');
+    } else if (state is AuthFailure) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(state.message)),
+      );
+    }
+  },
+  child: LoginForm(),
+)
+```
+
+### BlocConsumer
+
+Combines `BlocBuilder` and `BlocListener`:
+
+```dart
+BlocConsumer<AuthBloc, AuthState>(
+  listener: (context, state) {
+    // Handle side effects (navigation, snackbars)
+    if (state is AuthSuccess) {
+      Navigator.pushReplacementNamed(context, '/home');
+    }
+  },
+  builder: (context, state) {
+    // Build UI based on state
+    if (state is AuthLoading) {
+      return LoadingWidget();
+    }
+    return LoginForm();
+  },
+)
+```
+
+### Dispatching Events
+
+```dart
+// Using context
+context.read<AuthBloc>().add(
+  LoginRequested(
+    email: emailController.text,
+    password: passwordController.text,
+  ),
+);
+
+// Using BlocProvider
+BlocProvider.of<AuthBloc>(context).add(
+  LoginRequested(
+    email: emailController.text,
+    password: passwordController.text,
+  ),
+);
+```
+
+## Complete Example Flow
+
+<Accordion title="1. User Taps Login Button">
+  ```dart
+  // In login_page.dart
+  ElevatedButton(
+    onPressed: () {
+      context.read<AuthBloc>().add(
+        LoginRequested(
+          email: emailController.text,
+          password: passwordController.text,
+        ),
+      );
+    },
+    child: Text('Login'),
+  )
+  ```
+</Accordion>
+
+<Accordion title="2. BLoC Receives Event">
+  ```dart
+  // In auth_bloc.dart
+  on<LoginRequested>((event, emit) async {
+    emit(AuthLoading()); // Show loading indicator
+    
+    final result = await authRepository.loginWithEmail(
+      email: event.email,
+      password: event.password,
+    );
+    
+    result.fold(
+      (failure) => emit(AuthFailure(failure.message)),
+      (user) => emit(AuthSuccess(user)),
+    );
+  });
+  ```
+</Accordion>
+
+<Accordion title="3. Repository Performs Login">
+  ```dart
+  // In auth_repository_impl.dart
+  Future<Either<Failure, UserEntity>> loginWithEmail(...) async {
+    try {
+      final user = await remoteDataSource.loginWithEmail(email, password);
+      return Right(user); // Success
+    } on Failure catch (e) {
+      return Left(e); // Error
+    }
+  }
+  ```
+</Accordion>
+
+<Accordion title="4. UI Updates Based on State">
+  ```dart
+  // In login_page.dart
+  BlocConsumer<AuthBloc, AuthState>(
+    listener: (context, state) {
+      if (state is AuthSuccess) {
+        Navigator.pushReplacementNamed(context, '/home');
+      } else if (state is AuthFailure) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(state.message)),
+        );
+      }
+    },
+    builder: (context, state) {
+      if (state is AuthLoading) {
+        return Center(child: CircularProgressIndicator());
+      }
+      
+      return LoginForm(); // Show form when not loading
+    },
+  )
+  ```
+</Accordion>
+
+## BLoC Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Single Responsibility" icon="bullseye">
+    Each BLoC should manage one feature. Don't create a "God BLoC" that handles everything.
+  </Card>
+  
+  <Card title="Immutable State" icon="lock">
+    States should be immutable. Use `final` fields and create new state instances instead of modifying existing ones.
+  </Card>
+  
+  <Card title="Event Naming" icon="tag">
+    Name events as user actions or intentions: `LoginRequested`, `DocumentUploaded`, `LevelCompleted`.
+  </Card>
+  
+  <Card title="State Naming" icon="layer-group">
+    Name states as conditions: `AuthLoading`, `AuthSuccess`, `AuthFailure`, `HomeLoaded`.
+  </Card>
+</CardGroup>
+
+<Note>
+  **BLoC vs Repository**: BLoC handles UI state and user events. Repository handles data operations. Never put UI logic in repositories or data logic in BLoCs.
+</Note>
+
+## Dependency Injection
+
+All BLoCs are registered in the injection container:
+
+**File**: `lib/injection_container.dart:1`
+
+```dart
+import 'package:get_it/get_it.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+final sl = GetIt.instance; // Service Locator
+
+Future<void> init() async {
+  // BLoCs are registered as factories (new instance each time)
+  sl.registerFactory(() => AuthBloc(authRepository: sl()));
+  sl.registerFactory(() => HomeBloc(homeRepository: sl()));
+  sl.registerFactory(() => LevelBloc(sl()));
+  
+  // Repositories are singletons (one instance shared)
+  sl.registerLazySingleton<AuthRepository>(
+    () => AuthRepositoryImpl(remoteDataSource: sl()),
+  );
+  sl.registerLazySingleton<HomeRepository>(
+    () => HomeRepositoryImpl(remoteDataSource: sl()),
+  );
+  sl.registerLazySingleton(() => LevelRepository(sl()));
+  
+  // External dependencies
+  sl.registerLazySingleton(() => Supabase.instance.client);
+}
+```
+
+**Why Factories for BLoCs?**
+- Each screen gets a fresh BLoC instance
+- Avoids state pollution between navigations
+- Proper cleanup when screen is disposed
+
+**Why Singletons for Repositories?**
+- Share data and caching across app
+- Reduce unnecessary API calls
+- Consistent data state
+
+## Testing BLoCs
+
+BLoCs are highly testable because they have clear inputs (events) and outputs (states):
+
+```dart
+import 'package:bloc_test/bloc_test.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+
+class MockAuthRepository extends Mock implements AuthRepository {}
+
+void main() {
+  late AuthBloc authBloc;
+  late MockAuthRepository mockRepository;
+  
+  setUp(() {
+    mockRepository = MockAuthRepository();
+    authBloc = AuthBloc(authRepository: mockRepository);
+  });
+  
+  blocTest<AuthBloc, AuthState>(
+    'emits [AuthLoading, AuthSuccess] when login succeeds',
+    build: () {
+      when(() => mockRepository.loginWithEmail(
+        email: any(named: 'email'),
+        password: any(named: 'password'),
+      )).thenAnswer((_) async => Right(testUser));
+      
+      return authBloc;
+    },
+    act: (bloc) => bloc.add(
+      LoginRequested(email: 'test@example.com', password: 'password123'),
+    ),
+    expect: () => [
+      AuthLoading(),
+      AuthSuccess(testUser),
+    ],
+  );
+}
+```
+
+## Common Patterns
+
+### Self-Triggering Events
+
+```dart
+on<UploadDocumentRequested>((event, emit) async {
+  final result = await repository.uploadDocument(event.file);
+  
+  result.fold(
+    (failure) => emit(HomeError(failure.message)),
+    (_) {
+      // Trigger another event to reload the list
+      add(LoadDocuments());
+    },
+  );
+});
+```
+
+### Optimistic Updates
+
+```dart
+on<MarkLevelCompleted>((event, emit) async {
+  // Update UI immediately
+  final updatedLevels = state.levels.map((level) {
+    if (level.id == event.levelId) {
+      return level.copyWith(isCompleted: true);
+    }
+    return level;
+  }).toList();
+  
+  emit(LevelLoaded(updatedLevels));
+  
+  // Then sync with backend
+  await repository.markCompleted(event.levelId);
+});
+```
+
+### Debouncing Events
+
+```dart
+on<SearchQueryChanged>(
+  (event, emit) async {
+    emit(SearchLoading());
+    final results = await repository.search(event.query);
+    emit(SearchLoaded(results));
+  },
+  transformer: debounce(Duration(milliseconds: 300)),
+);
+```
+
+## Next Steps
+
+<Card title="Backend Worker Architecture" icon="robot" href="/architecture/backend-worker">
+  Learn how the Python worker processes PDFs and generates study content
+</Card>

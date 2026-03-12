@@ -1,0 +1,753 @@
+---
+title: 'Home Repositories'
+description: 'Repository contracts for document and level management'
+icon: 'database'
+---
+
+## Overview
+
+The Home feature uses two repositories: `HomeRepository` for document management and `LevelRepository` for level progression and learning content.
+
+---
+
+## HomeRepository
+
+Manages document upload, retrieval, and deletion operations.
+
+### Import
+
+```dart
+import 'package:study_quest/features/home/domain/repositories/home_repository.dart';
+import 'package:study_quest/features/home/domain/entities/document_entity.dart';
+import 'package:dartz/dartz.dart';
+import 'package:study_quest/core/errors/failures.dart';
+import 'dart:io';
+```
+
+### Methods
+
+#### getMyDocuments
+
+Retrieves all documents uploaded by the current user.
+
+```dart
+Future<Either<Failure, List<DocumentEntity>>> getMyDocuments();
+```
+
+##### Returns
+
+<ResponseField name="Either<Failure, List<DocumentEntity>>" type="Future">
+  Returns a list of `DocumentEntity` objects on success (Right), or a `Failure` on error (Left)
+</ResponseField>
+
+##### Example
+
+<CodeGroup>
+
+```dart Basic Usage
+final homeRepository = getIt<HomeRepository>();
+
+final result = await homeRepository.getMyDocuments();
+
+result.fold(
+  (failure) => print('Error: ${failure.message}'),
+  (documents) {
+    print('Found ${documents.length} documents');
+    for (var doc in documents) {
+      print('${doc.title} - Status: ${doc.status}');
+    }
+  },
+);
+```
+
+```dart Filter by Status
+final result = await homeRepository.getMyDocuments();
+
+result.fold(
+  (failure) => showError(failure.message),
+  (documents) {
+    final readyDocs = documents
+        .where((doc) => doc.status == 'ready')
+        .toList();
+    
+    final processingDocs = documents
+        .where((doc) => doc.status == 'processing')
+        .toList();
+    
+    print('Ready: ${readyDocs.length}');
+    print('Processing: ${processingDocs.length}');
+  },
+);
+```
+
+</CodeGroup>
+
+---
+
+#### uploadDocument
+
+Uploads a new PDF document for AI processing.
+
+```dart
+Future<Either<Failure, DocumentEntity>> uploadDocument(
+  File file,
+  String fileName,
+);
+```
+
+##### Parameters
+
+<ParamField path="file" type="File" required>
+  The PDF file to upload
+</ParamField>
+
+<ParamField path="fileName" type="String" required>
+  Display name for the document
+</ParamField>
+
+##### Returns
+
+<ResponseField name="Either<Failure, DocumentEntity>" type="Future">
+  Returns the newly created `DocumentEntity` on success (Right), or a `Failure` on error (Left)
+</ResponseField>
+
+##### Example
+
+<CodeGroup>
+
+```dart File Picker Upload
+import 'package:file_picker/file_picker.dart';
+
+Final homeRepository = getIt<HomeRepository>();
+
+// Pick a file
+final result = await FilePicker.platform.pickFiles(
+  type: FileType.custom,
+  allowedExtensions: ['pdf'],
+);
+
+if (result != null) {
+  final file = File(result.files.single.path!);
+  final fileName = result.files.single.name;
+  
+  // Upload to repository
+  final uploadResult = await homeRepository.uploadDocument(
+    file,
+    fileName,
+  );
+  
+  uploadResult.fold(
+    (failure) => showError('Upload failed: ${failure.message}'),
+    (document) {
+      showSuccess('Uploaded: ${document.title}');
+      print('Document ID: ${document.id}');
+      print('Status: ${document.status}');
+    },
+  );
+}
+```
+
+```dart With Loading State
+setState(() => isUploading = true);
+
+final result = await homeRepository.uploadDocument(
+  file,
+  fileName,
+);
+
+setState(() => isUploading = false);
+
+result.fold(
+  (failure) => ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(failure.message),
+      backgroundColor: Colors.red,
+    ),
+  ),
+  (document) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Upload successful! AI is processing...'),
+        backgroundColor: Colors.green,
+      ),
+    );
+    // Refresh document list
+    context.read<HomeBloc>().add(LoadDocuments());
+  },
+);
+```
+
+</CodeGroup>
+
+---
+
+#### deleteDocument
+
+Deletes a document and all its associated content.
+
+```dart
+Future<Either<Failure, void>> deleteDocument(String documentId);
+```
+
+##### Parameters
+
+<ParamField path="documentId" type="String" required>
+  ID of the document to delete
+</ParamField>
+
+##### Returns
+
+<ResponseField name="Either<Failure, void>" type="Future">
+  Returns success (Right) or a `Failure` on error (Left)
+</ResponseField>
+
+##### Example
+
+<CodeGroup>
+
+```dart Basic Delete
+final homeRepository = getIt<HomeRepository>();
+
+final result = await homeRepository.deleteDocument(documentId);
+
+result.fold(
+  (failure) => print('Delete failed: ${failure.message}'),
+  (_) => print('Document deleted successfully'),
+);
+```
+
+```dart With Confirmation
+showDialog(
+  context: context,
+  builder: (context) => AlertDialog(
+    title: const Text('Delete Document'),
+    content: const Text(
+      'This will delete the document and all flashcards/quizzes. Continue?',
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      TextButton(
+        onPressed: () async {
+          Navigator.pop(context);
+          
+          final result = await homeRepository.deleteDocument(
+            document.id,
+          );
+          
+          result.fold(
+            (failure) => showError(failure.message),
+            (_) {
+              showSuccess('Document deleted');
+              context.read<HomeBloc>().add(LoadDocuments());
+            },
+          );
+        },
+        child: const Text('Delete', style: TextStyle(color: Colors.red)),
+      ),
+    ],
+  ),
+);
+```
+
+</CodeGroup>
+
+---
+
+## LevelRepository
+
+Manages levels, flashcards, and quizzes for documents.
+
+### Import
+
+```dart
+import 'package:study_quest/features/home/domain/repositories/level_repository.dart';
+import 'package:study_quest/features/home/domain/entities/level_entity.dart';
+import 'package:study_quest/features/home/domain/entities/flashcard_entity.dart';
+import 'package:study_quest/features/home/domain/entities/quiz_entity.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+```
+
+### Constructor
+
+```dart
+LevelRepository(SupabaseClient supabase)
+```
+
+<ParamField path="supabase" type="SupabaseClient" required>
+  Supabase client instance
+</ParamField>
+
+### Methods
+
+#### getLevelsForDocument
+
+Retrieves all levels/topics for a specific document.
+
+```dart
+Future<List<LevelEntity>> getLevelsForDocument(String docId) async
+```
+
+##### Parameters
+
+<ParamField path="docId" type="String" required>
+  Document ID to fetch levels for
+</ParamField>
+
+##### Returns
+
+<ResponseField name="List<LevelEntity>" type="Future">
+  List of levels with lock/unlock status based on progression
+</ResponseField>
+
+##### Example
+
+<CodeGroup>
+
+```dart Load Levels
+final levelRepository = LevelRepository(Supabase.instance.client);
+
+try {
+  final levels = await levelRepository.getLevelsForDocument(documentId);
+  
+  print('Found ${levels.length} levels');
+  
+  for (var level in levels) {
+    print('${level.title}:');
+    print('  Type: ${level.type}');
+    print('  Locked: ${level.isLocked}');
+    print('  Difficulty: ${level.difficulty}');
+  }
+} catch (e) {
+  print('Error loading levels: $e');
+}
+```
+
+```dart Display in UI
+FutureBuilder<List<LevelEntity>>(
+  future: levelRepository.getLevelsForDocument(documentId),
+  builder: (context, snapshot) {
+    if (snapshot.connectionState == ConnectionState.waiting) {
+      return const CircularProgressIndicator();
+    }
+    
+    if (snapshot.hasError) {
+      return Text('Error: ${snapshot.error}');
+    }
+    
+    final levels = snapshot.data ?? [];
+    
+    return ListView.builder(
+      itemCount: levels.length,
+      itemBuilder: (context, index) {
+        final level = levels[index];
+        return ListTile(
+          title: Text(level.title),
+          subtitle: Text('Difficulty: ${'⭐' * level.difficulty}'),
+          trailing: level.isLocked
+              ? const Icon(Icons.lock)
+              : const Icon(Icons.play_arrow),
+          onTap: level.isLocked
+              ? null
+              : () => navigateToLevel(level),
+        );
+      },
+    );
+  },
+)
+```
+
+</CodeGroup>
+
+---
+
+#### markLevelCompleted
+
+Marks a level as completed, unlocking the next level.
+
+```dart
+Future<void> markLevelCompleted(String topicId) async
+```
+
+##### Parameters
+
+<ParamField path="topicId" type="String" required>
+  ID of the level/topic to mark as completed
+</ParamField>
+
+##### Example
+
+<CodeGroup>
+
+```dart Mark Complete
+final levelRepository = LevelRepository(Supabase.instance.client);
+
+try {
+  await levelRepository.markLevelCompleted(levelId);
+  print('Level completed!');
+  
+  // Award XP
+  await authRepository.addXp(50);
+  
+  // Refresh levels to update lock status
+  final updatedLevels = await levelRepository.getLevelsForDocument(
+    documentId,
+  );
+} catch (e) {
+  print('Error marking level complete: $e');
+}
+```
+
+```dart With User Feedback
+await levelRepository.markLevelCompleted(levelId);
+await authRepository.addXp(50);
+
+showDialog(
+  context: context,
+  builder: (context) => AlertDialog(
+    title: const Text('🎉 Level Complete!'),
+    content: const Text('You earned 50 XP!'),
+    actions: [
+      TextButton(
+        onPressed: () {
+          Navigator.pop(context); // Close dialog
+          Navigator.pop(context); // Return to level map
+        },
+        child: const Text('Continue'),
+      ),
+    ],
+  ),
+);
+```
+
+</CodeGroup>
+
+---
+
+#### getFlashcards
+
+Retrieves flashcards for a specific topic.
+
+```dart
+Future<List<FlashcardEntity>> getFlashcards(
+  String docId,
+  String topicId,
+) async
+```
+
+##### Parameters
+
+<ParamField path="docId" type="String" required>
+  Document ID
+</ParamField>
+
+<ParamField path="topicId" type="String" required>
+  Topic/level ID
+</ParamField>
+
+##### Returns
+
+<ResponseField name="List<FlashcardEntity>" type="Future">
+  List of flashcards for the topic
+</ResponseField>
+
+##### Example
+
+<CodeGroup>
+
+```dart Load Flashcards
+final levelRepository = LevelRepository(Supabase.instance.client);
+
+try {
+  final flashcards = await levelRepository.getFlashcards(
+    documentId,
+    topicId,
+  );
+  
+  print('Loaded ${flashcards.length} flashcards');
+  
+  for (var card in flashcards) {
+    print('Q: ${card.front}');
+    print('A: ${card.back}');
+  }
+} catch (e) {
+  print('Error loading flashcards: $e');
+}
+```
+
+```dart Flashcard Viewer
+class FlashcardViewer extends StatefulWidget {
+  final String documentId;
+  final String topicId;
+  
+  const FlashcardViewer({
+    required this.documentId,
+    required this.topicId,
+  });
+  
+  @override
+  State<FlashcardViewer> createState() => _FlashcardViewerState();
+}
+
+class _FlashcardViewerState extends State<FlashcardViewer> {
+  final levelRepository = LevelRepository(Supabase.instance.client);
+  List<FlashcardEntity>? flashcards;
+  int currentIndex = 0;
+  bool showBack = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    loadFlashcards();
+  }
+  
+  Future<void> loadFlashcards() async {
+    try {
+      final cards = await levelRepository.getFlashcards(
+        widget.documentId,
+        widget.topicId,
+      );
+      setState(() => flashcards = cards);
+    } catch (e) {
+      print('Error: $e');
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    if (flashcards == null) {
+      return const CircularProgressIndicator();
+    }
+    
+    final card = flashcards![currentIndex];
+    
+    return Column(
+      children: [
+        Text(showBack ? card.back : card.front),
+        ElevatedButton(
+          onPressed: () => setState(() => showBack = !showBack),
+          child: Text(showBack ? 'Show Question' : 'Show Answer'),
+        ),
+        if (currentIndex < flashcards!.length - 1)
+          ElevatedButton(
+            onPressed: () => setState(() {
+              currentIndex++;
+              showBack = false;
+            }),
+            child: const Text('Next Card'),
+          ),
+      ],
+    );
+  }
+}
+```
+
+</CodeGroup>
+
+---
+
+#### getQuizzes
+
+Retrieves quiz questions for a specific topic.
+
+```dart
+Future<List<QuizEntity>> getQuizzes(
+  String docId,
+  String topicId,
+) async
+```
+
+##### Parameters
+
+<ParamField path="docId" type="String" required>
+  Document ID
+</ParamField>
+
+<ParamField path="topicId" type="String" required>
+  Topic/level ID
+</ParamField>
+
+##### Returns
+
+<ResponseField name="List<QuizEntity>" type="Future">
+  List of quiz questions for the topic
+</ResponseField>
+
+##### Example
+
+<CodeGroup>
+
+```dart Load Quizzes
+final levelRepository = LevelRepository(Supabase.instance.client);
+
+try {
+  final quizzes = await levelRepository.getQuizzes(
+    documentId,
+    topicId,
+  );
+  
+  print('Loaded ${quizzes.length} questions');
+  
+  for (var quiz in quizzes) {
+    print('Q: ${quiz.question}');
+    print('Options: ${quiz.options.join(", ")}');
+    print('Correct: ${quiz.options[quiz.correctIndex]}');
+  }
+} catch (e) {
+  print('Error loading quizzes: $e');
+}
+```
+
+```dart Quiz Page
+class QuizPage extends StatefulWidget {
+  final String documentId;
+  final String topicId;
+  
+  const QuizPage({
+    required this.documentId,
+    required this.topicId,
+  });
+  
+  @override
+  State<QuizPage> createState() => _QuizPageState();
+}
+
+class _QuizPageState extends State<QuizPage> {
+  final levelRepository = LevelRepository(Supabase.instance.client);
+  List<QuizEntity>? quizzes;
+  int currentIndex = 0;
+  int? selectedAnswer;
+  bool showResult = false;
+  int score = 0;
+  
+  @override
+  void initState() {
+    super.initState();
+    loadQuizzes();
+  }
+  
+  Future<void> loadQuizzes() async {
+    try {
+      final questions = await levelRepository.getQuizzes(
+        widget.documentId,
+        widget.topicId,
+      );
+      setState(() => quizzes = questions);
+    } catch (e) {
+      print('Error: $e');
+    }
+  }
+  
+  void checkAnswer() {
+    if (selectedAnswer == null) return;
+    
+    final quiz = quizzes![currentIndex];
+    if (selectedAnswer == quiz.correctIndex) {
+      score++;
+    }
+    
+    setState(() => showResult = true);
+  }
+  
+  void nextQuestion() {
+    if (currentIndex < quizzes!.length - 1) {
+      setState(() {
+        currentIndex++;
+        selectedAnswer = null;
+        showResult = false;
+      });
+    } else {
+      // Quiz completed
+      final percentage = (score / quizzes!.length * 100).round();
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Quiz Complete!'),
+          content: Text('Score: $score/${quizzes!.length} ($percentage%)'),
+        ),
+      );
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    if (quizzes == null) {
+      return const CircularProgressIndicator();
+    }
+    
+    final quiz = quizzes![currentIndex];
+    
+    return Column(
+      children: [
+        Text(quiz.question, style: const TextStyle(fontSize: 18)),
+        ...List.generate(quiz.options.length, (index) {
+          return RadioListTile<int>(
+            title: Text(quiz.options[index]),
+            value: index,
+            groupValue: selectedAnswer,
+            onChanged: showResult ? null : (value) {
+              setState(() => selectedAnswer = value);
+            },
+          );
+        }),
+        if (!showResult)
+          ElevatedButton(
+            onPressed: selectedAnswer == null ? null : checkAnswer,
+            child: const Text('Submit Answer'),
+          ),
+        if (showResult) ..[
+          Text(
+            selectedAnswer == quiz.correctIndex
+                ? '✓ Correct!'
+                : '✗ Incorrect',
+            style: TextStyle(
+              color: selectedAnswer == quiz.correctIndex
+                  ? Colors.green
+                  : Colors.red,
+              fontSize: 20,
+            ),
+          ),
+          Text(quiz.explanation),
+          ElevatedButton(
+            onPressed: nextQuestion,
+            child: const Text('Next Question'),
+          ),
+        ],
+      ],
+    );
+  }
+}
+```
+
+</CodeGroup>
+
+---
+
+## Error Handling
+
+Both repositories throw exceptions on errors:
+
+```dart
+try {
+  final result = await homeRepository.getMyDocuments();
+  result.fold(
+    (failure) => handleError(failure.message),
+    (documents) => handleSuccess(documents),
+  );
+} catch (e) {
+  print('Unexpected error: $e');
+}
+```
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Home Overview" icon="house" href="/api/home/overview">
+    Feature architecture and entities
+  </Card>
+  <Card title="Home BLoC" icon="diagram-project" href="/api/home/bloc">
+    State management patterns
+  </Card>
+</CardGroup>

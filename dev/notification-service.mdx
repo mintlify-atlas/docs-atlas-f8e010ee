@@ -1,0 +1,435 @@
+---
+title: 'Notification Service'
+description: 'Implementation guide for local notifications and streak reminders in StudyQuest'
+---
+
+## Overview
+
+The notification service manages local push notifications to remind users about their study streaks. It uses `flutter_local_notifications` with timezone scheduling to send daily reminders.
+
+## Dependencies
+
+```yaml pubspec.yaml
+dependencies:
+  flutter_local_notifications: ^17.0.0
+  timezone: ^0.9.0
+```
+
+## Service Architecture
+
+```
+AuthRemoteDataSource (addXp) → NotificationService.scheduleStreakReminder() → flutter_local_notifications → System notification
+```
+
+## NotificationService Implementation
+
+```dart lib/core/services/notification_service.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+
+class NotificationService {
+  static final FlutterLocalNotificationsPlugin _notificationsPlugin = 
+      FlutterLocalNotificationsPlugin();
+
+  static Future<void> init() async {
+    // Initialize timezone data
+    tz.initializeTimeZones();
+    tz.setLocalLocation(tz.getLocation('America/Mexico_City'));
+
+    // Android settings
+    const AndroidInitializationSettings androidSettings = 
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    
+    // iOS settings
+    const DarwinInitializationSettings iosSettings = 
+        DarwinInitializationSettings(
+      requestSoundPermission: true,
+      requestBadgePermission: true,
+      requestAlertPermission: true,
+    );
+
+    const InitializationSettings initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+    await _notificationsPlugin.initialize(initSettings);
+
+    // Request Android 13+ permissions
+    await _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+        
+    // Request exact alarm permission (Android 12+)
+    await _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestExactAlarmsPermission();
+  }
+
+  static Future<void> scheduleStreakReminder() async {
+    // Cancel any existing notifications
+    await _notificationsPlugin.cancelAll();
+
+    // Schedule for tomorrow at 8 PM
+    final now = tz.TZDateTime.now(tz.local);
+    var scheduledDate = tz.TZDateTime(
+      tz.local, 
+      now.year, 
+      now.month, 
+      now.day, 
+      20  // 8 PM
+    );
+    scheduledDate = scheduledDate.add(const Duration(days: 1));
+
+    // TEST MODE: Trigger in 10 seconds (comment out for production)
+    // scheduledDate = tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10));
+
+    const AndroidNotificationDetails androidDetails = 
+        AndroidNotificationDetails(
+      'streak_channel',
+      'Streak Reminders',
+      channelDescription: 'Alerts when your study streak is at risk',
+      importance: Importance.max,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFF009688), // Teal
+    );
+
+    const NotificationDetails platformSpecifics = 
+        NotificationDetails(android: androidDetails);
+
+    await _notificationsPlugin.zonedSchedule(
+      0, // notification id
+      '¡Your streak is at risk! 🔥',
+      'You haven\'t studied today. Open StudyQuest and complete a quick lesson.',
+      scheduledDate,
+      platformSpecifics,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation: 
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+    
+    print("⏰ Notification scheduled for: $scheduledDate");
+  }
+}
+```
+
+## Initialization
+
+### In main.dart
+
+<Steps>
+  <Step title="Initialize service at app startup">
+    ```dart main.dart
+    void main() async {
+      WidgetsFlutterBinding.ensureInitialized();
+      
+      // Initialize Supabase
+      await Supabase.initialize(
+        url: 'YOUR_SUPABASE_URL',
+        anonKey: 'YOUR_SUPABASE_KEY',
+      );
+      
+      // Initialize notification service
+      await NotificationService.init();
+      
+      runApp(MyApp());
+    }
+    ```
+  </Step>
+  
+  <Step title="Schedule notification after XP gain">
+    The notification is automatically scheduled when users earn XP:
+    
+    ```dart lib/features/auth/data/datasources/auth_remote_data_source.dart
+    Future<void> addXp(int amount) async {
+      try {
+        final user = supabaseClient.auth.currentUser;
+        if (user == null) throw Exception("User not logged in");
+
+        // Update XP in database
+        await supabaseClient.rpc('add_xp', params: {'amount': amount});
+        
+        // Update streak logic...
+        
+        // Schedule reminder for tomorrow
+        await NotificationService.scheduleStreakReminder();
+      } catch (e) {
+        print("❌ Error in addXp: $e");
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Platform Configuration
+
+### Android Setup
+
+<CodeGroup>
+```xml AndroidManifest.xml
+<manifest>
+  <application>
+    <!-- Notification icon -->
+    <meta-data
+        android:name="com.google.firebase.messaging.default_notification_icon"
+        android:resource="@mipmap/ic_launcher" />
+    
+    <!-- Notification channel -->
+    <meta-data
+        android:name="com.google.firebase.messaging.default_notification_channel_id"
+        android:value="streak_channel" />
+  </application>
+  
+  <!-- Permissions -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+  <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+</manifest>
+```
+
+```gradle build.gradle
+android {
+    compileSdkVersion 34
+    
+    defaultConfig {
+        minSdkVersion 21
+        targetSdkVersion 34
+    }
+}
+```
+</CodeGroup>
+
+### iOS Setup
+
+```xml ios/Runner/Info.plist
+<dict>
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>fetch</string>
+    <string>remote-notification</string>
+  </array>
+</dict>
+```
+
+## Streak Logic Integration
+
+The notification system is tightly integrated with the streak tracking logic:
+
+```dart lib/features/auth/data/datasources/auth_remote_data_source.dart
+Future<void> addXp(int amount) async {
+  try {
+    final user = supabaseClient.auth.currentUser;
+    if (user == null) throw Exception("User not logged in");
+
+    // 1. Fetch current profile
+    final profile = await supabaseClient
+        .from('profiles')
+        .select('current_streak, last_activity_date')
+        .eq('id', user.id)
+        .single();
+
+    // 2. Add XP
+    await supabaseClient.rpc('add_xp', params: {'amount': amount});
+
+    // 3. Calculate streak
+    final now = DateTime.now();
+    final todayUtc = DateTime.utc(now.year, now.month, now.day);
+    
+    DateTime? lastActivityUtc;
+    if (profile['last_activity_date'] != null) {
+      final parsed = DateTime.parse(profile['last_activity_date']);
+      lastActivityUtc = DateTime.utc(parsed.year, parsed.month, parsed.day);
+    }
+
+    int currentStreak = (profile['current_streak'] as num?)?.toInt() ?? 0;
+    bool needsUpdate = false;
+
+    print("🕵️‍♂️ --- STREAK DIAGNOSIS ---");
+    print("📅 Last activity: $lastActivityUtc");
+    print("📅 Today: $todayUtc");
+    print("🔥 Current streak: $currentStreak");
+
+    // 4. Update streak
+    if (lastActivityUtc == null) {
+      currentStreak = 1;
+      needsUpdate = true;
+      print("➡️ First time studying. Streak = 1");
+    } else {
+      final difference = todayUtc.difference(lastActivityUtc).inDays;
+      print("⏳ Day difference: $difference");
+
+      if (difference == 1) {
+        currentStreak += 1;
+        needsUpdate = true;
+        print("➡️ Studied yesterday. Streak increases to $currentStreak!");
+      } else if (difference > 1) {
+        currentStreak = 1;
+        needsUpdate = true;
+        print("➡️ More than 2 days passed. Streak broken, reset to 1");
+      } else {
+        print("➡️ Already studied today. Streak stays at $currentStreak");
+      }
+    }
+
+    // 5. Update database if needed
+    if (needsUpdate) {
+      final dateString = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+      
+      await supabaseClient.from('profiles').update({
+        'current_streak': currentStreak,
+        'last_activity_date': dateString
+      }).eq('id', user.id);
+      
+      print("✅ Database updated: streak=$currentStreak, date=$dateString");
+    }
+
+    // 6. SCHEDULE REMINDER FOR TOMORROW
+    await NotificationService.scheduleStreakReminder();
+
+  } catch (e) {
+    print("❌ Error in addXp: $e");
+  }
+}
+```
+
+## Testing
+
+### Test Mode
+
+To test notifications quickly, uncomment the test mode line:
+
+```dart
+// Schedule for 10 seconds from now instead of tomorrow
+scheduledDate = tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10));
+```
+
+### Manual Trigger
+
+Create a debug button to manually trigger notifications:
+
+```dart
+ElevatedButton(
+  onPressed: () async {
+    await NotificationService.scheduleStreakReminder();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Notification scheduled!')),
+    );
+  },
+  child: Text('Test Notification'),
+)
+```
+
+## Notification Flow
+
+<Steps>
+  <Step title="User completes a level">
+    XP is awarded and `addXp()` is called.
+  </Step>
+  
+  <Step title="Streak calculated">
+    System checks `last_activity_date` and updates `current_streak`.
+  </Step>
+  
+  <Step title="Notification scheduled">
+    `scheduleStreakReminder()` cancels existing notifications and schedules a new one for tomorrow at 8 PM.
+  </Step>
+  
+  <Step title="Next day at 8 PM">
+    If user hasn't opened the app, they receive: "¡Your streak is at risk! 🔥"
+  </Step>
+  
+  <Step title="User opens app and studies">
+    New XP triggers reschedule, pushing notification to the next day.
+  </Step>
+</Steps>
+
+## Best Practices
+
+<ParamField path="Cancel before scheduling" type="recommendation">
+  Always call `cancelAll()` before scheduling to avoid duplicate notifications.
+</ParamField>
+
+<ParamField path="Use timezone-aware scheduling" type="recommendation">
+  Use `tz.TZDateTime` instead of regular `DateTime` to respect user's local timezone.
+</ParamField>
+
+<ParamField path="Request permissions early" type="recommendation">
+  Initialize notification permissions at app startup, not when first needed.
+</ParamField>
+
+<ParamField path="Handle permission denial" type="recommendation">
+  Gracefully handle cases where users deny notification permissions.
+</ParamField>
+
+<ParamField path="Test on real devices" type="testing">
+  Scheduled notifications don't work reliably in emulators. Test on physical devices.
+</ParamField>
+
+## Troubleshooting
+
+<Note>
+**Common Issues:**
+
+1. **Notifications not showing on Android 13+**
+   - Ensure `POST_NOTIFICATIONS` permission is requested
+   - Check that notification channel is properly configured
+
+2. **Exact alarms not working**
+   - Request `SCHEDULE_EXACT_ALARM` permission
+   - Use `AndroidScheduleMode.exactAllowWhileIdle`
+
+3. **Wrong timezone**
+   - Verify timezone initialization with correct location
+   - Use UTC for date calculations, convert for display
+
+4. **Notifications not rescheduling**
+   - Ensure `scheduleStreakReminder()` is called after every XP update
+   - Check for exceptions in the `addXp()` method
+</Note>
+
+## Advanced: Custom Notification Actions
+
+Add action buttons to notifications:
+
+```dart
+const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+  'streak_channel',
+  'Streak Reminders',
+  channelDescription: 'Alerts when your study streak is at risk',
+  importance: Importance.max,
+  priority: Priority.high,
+  icon: '@mipmap/ic_launcher',
+  color: Color(0xFF009688),
+  actions: <AndroidNotificationAction>[
+    AndroidNotificationAction(
+      'study_now',
+      'Study Now',
+      showsUserInterface: true,
+    ),
+    AndroidNotificationAction(
+      'remind_later',
+      'Remind Later',
+    ),
+  ],
+);
+```
+
+Then handle actions in initialization:
+
+```dart
+await _notificationsPlugin.initialize(
+  initSettings,
+  onDidReceiveNotificationResponse: (NotificationResponse response) {
+    if (response.actionId == 'study_now') {
+      // Navigate to level map
+    } else if (response.actionId == 'remind_later') {
+      // Schedule again in 1 hour
+    }
+  },
+);
+```

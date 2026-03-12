@@ -1,0 +1,202 @@
+---
+title: 'App Theme'
+description: 'Theme configuration and color palette for StudyQuest'
+icon: 'palette'
+---
+
+## Overview
+
+The `AppTheme` class provides a centralized theme configuration for StudyQuest using Material 3 design principles. It defines a cohesive color palette inspired by nature and learning, with colors ranging from deep ocean blue to fresh mint green.
+
+**Location:** `/lib/core/theme/app_theme.dart`
+
+## Color Palette
+
+StudyQuest uses a nature-inspired color scheme designed to promote focus and motivation:
+
+<ParamField path="darkBlue" type="Color" default="0xFF22577A">
+  Primary brand color used for app bars, buttons, and key UI elements. Represents depth and trust.
+</ParamField>
+
+<ParamField path="teal" type="Color" default="0xFF38A3A5">
+  Secondary color used for accents and focused states. Provides visual balance.
+</ParamField>
+
+<ParamField path="mint" type="Color" default="0xFF57CC99">
+  Tertiary color used for floating action buttons and success states. Energizing and fresh.
+</ParamField>
+
+<ParamField path="lightGreen" type="Color" default="0xFF80ED99">
+  Supplementary color for highlights and positive feedback.
+</ParamField>
+
+<ParamField path="paleGreen" type="Color" default="0xFFC7F9CC">
+  Light background color for inputs and subtle UI elements with 30% opacity.
+</ParamField>
+
+## Theme Configuration
+
+### Light Theme
+
+The app uses a light theme optimized for readability and extended study sessions.
+
+<CodeGroup>
+```dart Usage
+import 'package:studyquest/core/theme/app_theme.dart';
+import 'package:flutter/material.dart';
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'StudyQuest',
+      theme: AppTheme.lightTheme,
+      home: HomeScreen(),
+    );
+  }
+}
+```
+
+```dart Accessing Colors
+import 'package:studyquest/core/theme/app_theme.dart';
+
+// Use static color constants
+Container(
+  color: AppTheme.darkBlue,
+  child: Text(
+    'Welcome to StudyQuest',
+    style: TextStyle(color: Colors.white),
+  ),
+)
+
+// Or use theme colors from context
+Container(
+  color: Theme.of(context).colorScheme.primary,
+  child: Text(
+    'Study Progress',
+    style: Theme.of(context).textTheme.titleLarge,
+  ),
+)
+```
+</CodeGroup>
+
+## Theme Properties
+
+### Material 3 Configuration
+
+<ResponseField name="useMaterial3" type="bool" default="true">
+  Enables Material 3 design system with updated components and elevation.
+</ResponseField>
+
+<ResponseField name="colorScheme" type="ColorScheme">
+  Generated from seed color with the following mappings:
+  - **primary:** `darkBlue` (0xFF22577A)
+  - **secondary:** `teal` (0xFF38A3A5)
+  - **tertiary:** `mint` (0xFF57CC99)
+  - **surface:** `Colors.white`
+  - **background:** `Colors.white`
+</ResponseField>
+
+### Component Themes
+
+#### AppBar Theme
+
+<ResponseField name="appBarTheme" type="AppBarTheme">
+  - **backgroundColor:** `darkBlue`
+  - **foregroundColor:** `Colors.white`
+  - **centerTitle:** `true`
+  - **elevation:** `0` (flat design)
+</ResponseField>
+
+#### Input Decoration Theme
+
+<ResponseField name="inputDecorationTheme" type="InputDecorationTheme">
+  Styled text inputs with rounded corners and subtle backgrounds:
+  - **filled:** `true`
+  - **fillColor:** `paleGreen` with 30% opacity
+  - **borderRadius:** 12px rounded corners
+  - **focusedBorder:** 2px `teal` border
+  - **prefixIconColor:** `darkBlue`
+</ResponseField>
+
+<CodeGroup>
+```dart Input Example
+TextField(
+  decoration: InputDecoration(
+    labelText: 'Enter your answer',
+    prefixIcon: Icon(Icons.edit),
+  ),
+)
+// Automatically styled with paleGreen background and teal focus border
+```
+</CodeGroup>
+
+#### Button Themes
+
+<ResponseField name="filledButtonTheme" type="FilledButtonThemeData">
+  Primary action buttons:
+  - **backgroundColor:** `darkBlue`
+  - **foregroundColor:** `Colors.white`
+  - **padding:** 16px vertical
+  - **borderRadius:** 12px
+  - **fontSize:** 16px bold
+</ResponseField>
+
+<ResponseField name="floatingActionButtonTheme" type="FloatingActionButtonThemeData">
+  FAB styling:
+  - **backgroundColor:** `mint`
+  - **foregroundColor:** `Colors.white`
+</ResponseField>
+
+<CodeGroup>
+```dart Button Examples
+// Filled button (primary actions)
+FilledButton(
+  onPressed: () => submitAnswer(),
+  child: Text('Submit Answer'),
+)
+
+// Floating action button
+FloatingActionButton(
+  onPressed: () => addNewCard(),
+  child: Icon(Icons.add),
+)
+```
+</CodeGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Theme Colors Over Hard-Coded Values">
+    Always reference colors through `Theme.of(context)` or `AppTheme` constants rather than creating new color instances.
+    
+    ```dart
+    // Good
+    color: Theme.of(context).colorScheme.primary
+    color: AppTheme.darkBlue
+    
+    // Avoid
+    color: Color(0xFF22577A)
+    ```
+  </Accordion>
+
+  <Accordion title="Leverage Material 3 Components">
+    Use Material 3 components that automatically inherit theme styling:
+    - `FilledButton` instead of `ElevatedButton` for primary actions
+    - `Card` with automatic surface colors
+    - `NavigationBar` for bottom navigation
+  </Accordion>
+
+  <Accordion title="Maintain Visual Hierarchy">
+    Use the color palette to establish clear visual hierarchy:
+    - **Primary actions:** `darkBlue`
+    - **Secondary actions:** `teal`
+    - **Success/completion:** `mint` or `lightGreen`
+    - **Backgrounds:** `paleGreen` with opacity
+  </Accordion>
+</AccordionGroup>
+
+## See Also
+
+- [Notification Service](/api/core/notifications) - Notification styling uses theme colors
+- [Flutter Material 3 Guide](https://m3.material.io/) - Official Material Design documentation

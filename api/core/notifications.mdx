@@ -1,0 +1,303 @@
+---
+title: 'Notification Service'
+description: 'Local notification management for streak reminders and study alerts'
+icon: 'bell'
+---
+
+## Overview
+
+The `NotificationService` provides scheduled local notifications to help users maintain their study streaks. It uses `flutter_local_notifications` with timezone support to deliver timely reminders.
+
+**Location:** `/lib/core/services/notification_service.dart`
+
+## Dependencies
+
+```yaml pubspec.yaml
+dependencies:
+  flutter_local_notifications: ^17.0.0
+  timezone: ^0.9.0
+```
+
+## Initialization
+
+### init()
+
+Initializes the notification service with platform-specific settings and requests required permissions.
+
+<CodeGroup>
+```dart Usage
+import 'package:studyquest/core/services/notification_service.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize notifications before running app
+  await NotificationService.init();
+  
+  runApp(MyApp());
+}
+```
+
+```dart Service Implementation
+static Future<void> init() async {
+  // Initialize timezone database
+  tz.initializeTimeZones();
+  tz.setLocalLocation(tz.getLocation('America/Mexico_City'));
+
+  // Configure Android settings
+  const AndroidInitializationSettings androidSettings = 
+    AndroidInitializationSettings('@mipmap/ic_launcher');
+  
+  // Configure iOS settings
+  const DarwinInitializationSettings iosSettings = 
+    DarwinInitializationSettings(
+      requestSoundPermission: true,
+      requestBadgePermission: true,
+      requestAlertPermission: true,
+    );
+
+  // Initialize plugin
+  const InitializationSettings initSettings = InitializationSettings(
+    android: androidSettings,
+    iOS: iosSettings,
+  );
+
+  await _notificationsPlugin.initialize(initSettings);
+
+  // Request Android 13+ permissions
+  await _notificationsPlugin
+    .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+    ?.requestNotificationsPermission();
+      
+  await _notificationsPlugin
+    .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+    ?.requestExactAlarmsPermission();
+}
+```
+</CodeGroup>
+
+### Configuration Details
+
+<ParamField path="timezone" type="Location" default="America/Mexico_City">
+  The timezone used for scheduling notifications. Set during initialization to ensure accurate delivery times.
+</ParamField>
+
+<ParamField path="androidSettings" type="AndroidInitializationSettings">
+  Android-specific configuration:
+  - **icon:** `@mipmap/ic_launcher` - Uses app launcher icon
+</ParamField>
+
+<ParamField path="iosSettings" type="DarwinInitializationSettings">
+  iOS-specific configuration:
+  - **requestSoundPermission:** `true`
+  - **requestBadgePermission:** `true`
+  - **requestAlertPermission:** `true`
+</ParamField>
+
+## Streak Reminders
+
+### scheduleStreakReminder()
+
+Schedules a daily notification to remind users to maintain their study streak.
+
+<CodeGroup>
+```dart Usage
+import 'package:studyquest/core/services/notification_service.dart';
+
+// Schedule reminder when user completes a study session
+Future<void> onStudySessionComplete() async {
+  await updateUserStreak();
+  
+  // Schedule tomorrow's reminder
+  await NotificationService.scheduleStreakReminder();
+  
+  showSuccessMessage('Great job! See you tomorrow!');
+}
+```
+
+```dart Service Implementation
+static Future<void> scheduleStreakReminder() async {
+  // Cancel any existing notifications
+  await _notificationsPlugin.cancelAll();
+
+  // Calculate next reminder time (8 PM tomorrow)
+  final now = tz.TZDateTime.now(tz.local);
+  var scheduledDate = tz.TZDateTime(
+    tz.local, 
+    now.year, 
+    now.month, 
+    now.day, 
+    20  // 8 PM
+  ); 
+  scheduledDate = scheduledDate.add(const Duration(days: 1));
+
+  // Configure notification appearance
+  const AndroidNotificationDetails androidDetails = 
+    AndroidNotificationDetails(
+      'streak_channel', 
+      'Recordatorios de Racha',
+      channelDescription: 'Avisa cuando tu racha de estudio está en peligro',
+      importance: Importance.max,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFF009688), // Teal color
+    );
+
+  const NotificationDetails platformSpecifics = 
+    NotificationDetails(android: androidDetails);
+
+  // Schedule the notification
+  await _notificationsPlugin.zonedSchedule(
+    0, // Notification ID
+    '¡Tu racha está en peligro! 🔥', 
+    'Aún no has estudiado hoy. Entra a StudyQuest y completa una lección rápida.', 
+    scheduledDate, 
+    platformSpecifics, 
+    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle, 
+    uiLocalNotificationDateInterpretation: 
+      UILocalNotificationDateInterpretation.absoluteTime,
+  );
+}
+```
+</CodeGroup>
+
+### Notification Configuration
+
+<ResponseField name="notificationId" type="int" default="0">
+  Unique identifier for the streak reminder notification. Using ID 0 allows easy cancellation and rescheduling.
+</ResponseField>
+
+<ResponseField name="title" type="String" default="¡Tu racha está en peligro! 🔥">
+  Eye-catching title to grab user attention about their study streak.
+</ResponseField>
+
+<ResponseField name="body" type="String" default="Aún no has estudiado hoy...">
+  Encouraging message prompting users to complete a quick lesson.
+</ResponseField>
+
+<ResponseField name="scheduledTime" type="TZDateTime">
+  Notification delivery time set to 8:00 PM (20:00) the following day in the user's local timezone.
+</ResponseField>
+
+### Android Notification Channel
+
+<ResponseField name="channel" type="AndroidNotificationDetails">
+  Platform-specific configuration for Android notifications:
+  
+  <ParamField path="channelId" type="String" default="streak_channel">
+    Unique identifier for grouping streak notifications.
+  </ParamField>
+  
+  <ParamField path="channelName" type="String" default="Recordatorios de Racha">
+    User-visible channel name in notification settings.
+  </ParamField>
+  
+  <ParamField path="channelDescription" type="String">
+    Description: "Avisa cuando tu racha de estudio está en peligro"
+  </ParamField>
+  
+  <ParamField path="importance" type="Importance" default="max">
+    Maximum importance level for critical streak reminders.
+  </ParamField>
+  
+  <ParamField path="priority" type="Priority" default="high">
+    High priority ensures notification appears prominently.
+  </ParamField>
+  
+  <ParamField path="color" type="Color" default="0xFF009688">
+    Teal color (matches app theme) for notification accent.
+  </ParamField>
+</ResponseField>
+
+### Scheduling Behavior
+
+<ResponseField name="androidScheduleMode" type="AndroidScheduleMode" default="exactAllowWhileIdle">
+  Allows exact-time delivery even when device is in low-power mode, ensuring users receive streak reminders reliably.
+</ResponseField>
+
+<ResponseField name="uiLocalNotificationDateInterpretation" type="UILocalNotificationDateInterpretation" default="absoluteTime">
+  Interprets the scheduled date as absolute time rather than relative, ensuring consistent delivery at 8 PM.
+</ResponseField>
+
+## Test Mode
+
+<Note>
+  The current implementation includes a test mode (line 44) that schedules notifications 10 seconds after calling `scheduleStreakReminder()` instead of 8 PM the next day. This is useful for development and testing.
+  
+  ```dart
+  // Test mode - triggers in 10 seconds
+  scheduledDate = tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10));
+  ```
+  
+  Remove or comment this line for production to use the actual 8 PM schedule.
+</Note>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Initialize Early">
+    Always initialize `NotificationService` in your `main()` function before running the app to ensure permissions are granted and the service is ready.
+    
+    ```dart
+    void main() async {
+      WidgetsFlutterBinding.ensureInitialized();
+      await NotificationService.init();
+      runApp(MyApp());
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Handle Permission Denials">
+    Check if notification permissions were granted and provide fallback UI:
+    
+    ```dart
+    final permission = await _notificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+      ?.requestNotificationsPermission();
+    
+    if (permission != true) {
+      // Show dialog explaining importance of notifications
+      showPermissionExplanationDialog();
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Cancel Before Rescheduling">
+    The service calls `cancelAll()` before scheduling new notifications to prevent duplicate reminders.
+    
+    ```dart
+    await _notificationsPlugin.cancelAll();
+    // Then schedule new notification
+    ```
+  </Accordion>
+
+  <Accordion title="Test Across Timezones">
+    If your app serves multiple regions, ensure timezone handling works correctly by testing with different `tz.Location` values.
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Notifications Not Appearing">
+    1. Verify permissions were granted during initialization
+    2. Check Android notification channel settings in device Settings app
+    3. Ensure `requestExactAlarmsPermission()` was called for Android 12+
+    4. Confirm timezone is set correctly for your region
+  </Accordion>
+
+  <Accordion title="Wrong Delivery Time">
+    Ensure the timezone is set correctly:
+    ```dart
+    tz.setLocalLocation(tz.getLocation('Your/Timezone'));
+    ```
+    
+    Use [IANA timezone database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) identifiers.
+  </Accordion>
+</AccordionGroup>
+
+## See Also
+
+- [Dependency Injection](/api/core/dependency-injection) - Service registration patterns
+- [App Theme](/api/core/theme) - Notification color matching app theme
+- [flutter_local_notifications](https://pub.dev/packages/flutter_local_notifications) - Package documentation

@@ -1,0 +1,532 @@
+---
+title: 'Clean Architecture'
+description: 'Understanding the three-layer architecture in StudyQuest'
+icon: 'layer-group'
+---
+
+## What is Clean Architecture?
+
+Clean Architecture is a software design philosophy that separates the application into layers with clear boundaries and dependencies. In StudyQuest, we implement this pattern to create maintainable, testable, and scalable code.
+
+## The Three Layers
+
+### 1. Presentation Layer
+
+**Location**: `lib/features/*/presentation/`
+
+**Purpose**: Handles UI and user interactions. This layer communicates with the domain layer through BLoC components.
+
+**Contains**:
+- Pages (UI screens)
+- Widgets (reusable UI components)
+- BLoCs (state management)
+- UI-specific models
+
+**Example Structure**:
+```
+lib/features/auth/presentation/
+├── bloc/
+│   ├── auth_bloc.dart
+│   ├── auth_event.dart
+│   └── auth_state.dart
+└── pages/
+    ├── login_page.dart
+    ├── register_page.dart
+    └── welcome_page.dart
+```
+
+<Note>
+  The presentation layer should **never** directly access data sources or external services. All data operations go through the domain layer.
+</Note>
+
+#### Real Example: AuthBloc
+
+**File**: `lib/features/auth/presentation/bloc/auth_bloc.dart:1`
+
+```dart
+class AuthBloc extends Bloc<AuthEvent, AuthState> {
+  final AuthRepository authRepository; // Domain layer dependency
+
+  AuthBloc({required this.authRepository}) : super(AuthInitial()) {
+    
+    // Handle login event
+    on<LoginRequested>((event, emit) async {
+      // 1. Emit loading state
+      emit(AuthLoading());
+
+      // 2. Call repository (domain layer)
+      final result = await authRepository.loginWithEmail(
+        email: event.email,
+        password: event.password,
+      );
+
+      // 3. Handle result (Left=Error, Right=Success)
+      result.fold(
+        (failure) => emit(AuthFailure(failure.message)),
+        (user) => emit(AuthSuccess(user)),
+      );
+    });
+  }
+}
+```
+
+**Key Points**:
+- BLoC depends on `AuthRepository` interface (not implementation)
+- Uses `Either` type for functional error handling
+- Emits different states based on operation result
+- No direct API calls or business logic
+
+### 2. Domain Layer
+
+**Location**: `lib/features/*/domain/`
+
+**Purpose**: Contains the core business logic and rules. This layer is completely independent of Flutter, UI frameworks, or external libraries.
+
+**Contains**:
+- Entities (pure Dart business objects)
+- Repository interfaces (abstract classes)
+- Use cases (optional, for complex business operations)
+- Business validation logic
+
+**Example Structure**:
+```
+lib/features/auth/domain/
+├── entities/
+│   ├── user_entity.dart
+│   └── profile_entity.dart
+└── repositories/
+    └── auth_repository.dart
+```
+
+<Accordion title="Why is the Domain Layer Independent?">
+  The domain layer contains your business rules and should work anywhere. You could:
+  - Use it in a web app instead of mobile
+  - Test it without any UI
+  - Switch from Supabase to Firebase without changing domain code
+  - Run business logic in a backend service
+  
+  This independence is achieved by having **zero external dependencies** in the domain layer.
+</Accordion>
+
+#### Real Example: Entities
+
+**File**: `lib/features/auth/domain/entities/user_entity.dart:1`
+
+```dart
+import 'package:equatable/equatable.dart';
+
+class UserEntity extends Equatable {
+  final String id;
+  final String email;
+  final String username;
+  final String? avatarUrl;
+
+  const UserEntity({
+    required this.id,
+    required this.email,
+    required this.username,
+    this.avatarUrl,
+  });
+
+  @override
+  List<Object?> get props => [id, email, username, avatarUrl];
+}
+```
+
+**Characteristics**:
+- Pure Dart class (no Flutter dependencies)
+- Immutable (all fields are final)
+- Extends `Equatable` for value equality
+- Represents a business concept
+
+#### Real Example: Repository Contract
+
+**File**: `lib/features/auth/domain/repositories/auth_repository.dart:1`
+
+```dart
+import 'package:dartz/dartz.dart';
+import '../../../../core/errors/failures.dart';
+import '../entities/user_entity.dart';
+import '../entities/profile_entity.dart';
+
+// Abstract class = Contract
+abstract class AuthRepository {
+  
+  // Either<Failure, UserEntity> means:
+  // "This will return EITHER a Failure (left) OR a User (right)"
+  Future<Either<Failure, UserEntity>> loginWithEmail({
+    required String email,
+    required String password,
+  });
+
+  Future<Either<Failure, UserEntity>> registerWithEmail({
+    required String email,
+    required String password,
+    required String username,
+  });
+
+  Future<Either<Failure, ProfileEntity>> getCurrentProfile();
+  
+  Future<void> addXp(int amount);
+  
+  Future<void> logout();
+}
+```
+
+**Key Points**:
+- Abstract class defines the contract
+- Returns `Either` type for error handling
+- No implementation details
+- Data layer will implement this interface
+
+### 3. Data Layer
+
+**Location**: `lib/features/*/data/`
+
+**Purpose**: Implements repository contracts and handles data operations. This layer knows about Supabase, API calls, local storage, etc.
+
+**Contains**:
+- Repository implementations
+- Data sources (remote and local)
+- Data models (for JSON serialization)
+- Mappers (convert models to entities)
+
+**Example Structure**:
+```
+lib/features/auth/data/
+├── datasources/
+│   └── auth_remote_data_source.dart
+├── models/
+│   └── user_model.dart
+└── repositories/
+    └── auth_repository_impl.dart
+```
+
+#### Real Example: Repository Implementation
+
+**File**: `lib/features/auth/data/repositories/auth_repository_impl.dart:1`
+
+```dart
+import 'package:dartz/dartz.dart';
+import '../../../../core/errors/failures.dart';
+import '../../domain/entities/user_entity.dart';
+import '../../domain/repositories/auth_repository.dart';
+import '../datasources/auth_remote_data_source.dart';
+
+class AuthRepositoryImpl implements AuthRepository {
+  final AuthRemoteDataSource remoteDataSource;
+
+  AuthRepositoryImpl({required this.remoteDataSource});
+
+  @override
+  Future<Either<Failure, UserEntity>> loginWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final user = await remoteDataSource.loginWithEmail(email, password);
+      // Success: Return RIGHT side with user
+      return Right(user);
+    } on Failure catch (e) {
+      // Known failure: Return LEFT side with error
+      return Left(e);
+    } catch (e) {
+      // Unexpected error
+      return const Left(ServerFailure('Unexpected error in repository'));
+    }
+  }
+
+  @override
+  Future<Either<Failure, UserEntity>> registerWithEmail({
+    required String email,
+    required String password,
+    required String username,
+  }) async {
+    try {
+      final user = await remoteDataSource.registerWithEmail(
+        email, 
+        password, 
+        username
+      );
+      return Right(user);
+    } on Failure catch (e) {
+      return Left(e);
+    } catch (e) {
+      return Left(ServerFailure('Registration failed: ${e.toString()}'));
+    }
+  }
+
+  @override
+  Future<void> logout() async {
+    try {
+      await remoteDataSource.logout();
+    } catch (e) {
+      // Logout errors are usually not critical
+      print('Logout error: $e');
+    }
+  }
+}
+```
+
+**Key Points**:
+- Implements the `AuthRepository` interface from domain layer
+- Depends on `AuthRemoteDataSource` (injected via constructor)
+- Converts exceptions to `Either` types
+- Handles both expected and unexpected errors
+
+## Error Handling Pattern
+
+StudyQuest uses the `Either` type from `dartz` package for functional error handling.
+
+**File**: `lib/core/errors/failures.dart:1`
+
+```dart
+import 'package:equatable/equatable.dart';
+
+// Base abstract class for all errors
+abstract class Failure extends Equatable {
+  final String message;
+  
+  const Failure(this.message);
+
+  @override
+  List<Object> get props => [message];
+}
+
+// Specific error types
+class ServerFailure extends Failure {
+  const ServerFailure(super.message);
+}
+
+class CacheFailure extends Failure {
+  const CacheFailure(super.message);
+}
+```
+
+<CodeGroup>
+```dart Domain Layer - Repository Contract
+// Returns Either<Error, Success>
+Future<Either<Failure, UserEntity>> loginWithEmail({
+  required String email,
+  required String password,
+});
+```
+
+```dart Data Layer - Repository Implementation
+try {
+  final user = await remoteDataSource.loginWithEmail(email, password);
+  return Right(user); // Success
+} on Failure catch (e) {
+  return Left(e); // Known error
+} catch (e) {
+  return Left(ServerFailure('Unexpected error')); // Unknown error
+}
+```
+
+```dart Presentation Layer - BLoC Usage
+final result = await authRepository.loginWithEmail(
+  email: event.email,
+  password: event.password,
+);
+
+// Pattern matching on result
+result.fold(
+  (failure) => emit(AuthFailure(failure.message)), // Handle error
+  (user) => emit(AuthSuccess(user)),                // Handle success
+);
+```
+</CodeGroup>
+
+## Feature-Based Organization
+
+StudyQuest organizes code by feature, not by layer. Each feature is self-contained:
+
+```
+lib/features/
+├── auth/
+│   ├── data/
+│   ├── domain/
+│   └── presentation/
+├── home/
+│   ├── data/
+│   ├── domain/
+│   └── presentation/
+└── [other features]/
+```
+
+**Benefits**:
+- Easy to locate all code related to a feature
+- Features can be developed independently
+- Clear boundaries between features
+- Easier to test individual features
+- Can extract features to packages if needed
+
+## Data Flow Example
+
+Let's trace a login request through all three layers:
+
+<Steps>
+  <Step title="User Interaction (Presentation)">
+    User taps "Login" button in `login_page.dart`:
+    
+    ```dart
+    BlocProvider.of<AuthBloc>(context).add(
+      LoginRequested(
+        email: emailController.text,
+        password: passwordController.text,
+      ),
+    );
+    ```
+  </Step>
+  
+  <Step title="BLoC Processing (Presentation)">
+    `AuthBloc` receives event and calls repository:
+    
+    ```dart
+    on<LoginRequested>((event, emit) async {
+      emit(AuthLoading());
+      
+      final result = await authRepository.loginWithEmail(
+        email: event.email,
+        password: event.password,
+      );
+      
+      result.fold(
+        (failure) => emit(AuthFailure(failure.message)),
+        (user) => emit(AuthSuccess(user)),
+      );
+    });
+    ```
+  </Step>
+  
+  <Step title="Repository Contract (Domain)">
+    Interface defines what should happen (no implementation):
+    
+    ```dart
+    abstract class AuthRepository {
+      Future<Either<Failure, UserEntity>> loginWithEmail({
+        required String email,
+        required String password,
+      });
+    }
+    ```
+  </Step>
+  
+  <Step title="Repository Implementation (Data)">
+    Implementation calls Supabase API:
+    
+    ```dart
+    class AuthRepositoryImpl implements AuthRepository {
+      @override
+      Future<Either<Failure, UserEntity>> loginWithEmail(...) async {
+        try {
+          final user = await remoteDataSource.loginWithEmail(email, password);
+          return Right(user);
+        } on Failure catch (e) {
+          return Left(e);
+        }
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Remote Data Source (Data)">
+    Makes actual API call to Supabase:
+    
+    ```dart
+    class AuthRemoteDataSourceImpl {
+      Future<UserEntity> loginWithEmail(String email, String password) async {
+        final response = await supabaseClient.auth.signInWithPassword(
+          email: email,
+          password: password,
+        );
+        
+        if (response.user == null) {
+          throw ServerFailure('Login failed');
+        }
+        
+        return UserEntity.fromSupabaseUser(response.user!);
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Response Flows Back">
+    - Data source returns `UserEntity` or throws `Failure`
+    - Repository converts to `Either<Failure, UserEntity>`
+    - BLoC receives result and emits appropriate state
+    - UI rebuilds based on new state
+  </Step>
+</Steps>
+
+## Benefits of Clean Architecture
+
+<CardGroup cols={2}>
+  <Card title="Testability" icon="vial">
+    Business logic can be tested without UI, database, or external services. Mock dependencies easily.
+  </Card>
+  
+  <Card title="Maintainability" icon="wrench">
+    Clear separation makes code easier to understand and modify. Changes are isolated to specific layers.
+  </Card>
+  
+  <Card title="Scalability" icon="arrow-up-right-dots">
+    New features follow the same pattern. Team members know exactly where to add code.
+  </Card>
+  
+  <Card title="Flexibility" icon="shuffle">
+    Swap implementations without changing business logic. Switch from Supabase to Firebase? Only data layer changes.
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Dependency Injection
+
+All dependencies are injected via constructors and managed by GetIt:
+
+```dart
+// Register in injection_container.dart
+sl.registerFactory(() => AuthBloc(authRepository: sl()));
+sl.registerLazySingleton<AuthRepository>(
+  () => AuthRepositoryImpl(remoteDataSource: sl()),
+);
+
+// Use in widget
+BlocProvider(
+  create: (context) => sl<AuthBloc>(),
+  child: LoginPage(),
+)
+```
+
+### Entity vs Model
+
+- **Entity**: Pure business object in domain layer
+- **Model**: Data transfer object in data layer with JSON serialization
+
+```dart
+// Domain Entity (pure Dart)
+class UserEntity {
+  final String id;
+  final String email;
+  const UserEntity({required this.id, required this.email});
+}
+
+// Data Model (with JSON serialization)
+class UserModel extends UserEntity {
+  UserModel({required super.id, required super.email});
+  
+  factory UserModel.fromJson(Map<String, dynamic> json) => UserModel(
+    id: json['id'],
+    email: json['email'],
+  );
+  
+  Map<String, dynamic> toJson() => {'id': id, 'email': email};
+}
+```
+
+## Next Steps
+
+<Card title="State Management with BLoC" icon="code-branch" href="/architecture/state-management">
+  Learn how BLoC pattern manages state in the presentation layer
+</Card>

@@ -1,0 +1,297 @@
+---
+title: 'AI Content Generation'
+description: 'Learn how StudyQuest uses Google Gemini AI to transform PDFs into interactive learning content'
+icon: 'brain'
+---
+
+## Overview
+
+StudyQuest's AI-powered content generation system automatically transforms uploaded PDF documents into structured learning paths with flashcards, quizzes, and topics. The system uses **Google Gemini 2.5 Flash** to analyze documents and extract educational content.
+
+<Note>
+The AI worker processes documents asynchronously in the background, allowing users to continue using the app while their content is being generated.
+</Note>
+
+## Architecture
+
+The content generation pipeline consists of several stages:
+
+<Steps>
+  <Step title="Document Upload">
+    User uploads a PDF which is stored in Supabase Storage and a document record is created with status `processing`
+  </Step>
+  
+  <Step title="PDF Text Extraction">
+    The worker downloads the PDF and extracts all text using PyPDF library
+  </Step>
+  
+  <Step title="Global Context Generation">
+    AI analyzes the document to generate a short title and motivational summary
+  </Step>
+  
+  <Step title="Intelligent Chunking">
+    Document is split into 25,000 character chunks for efficient AI processing
+  </Step>
+  
+  <Step title="Content Generation">
+    Each chunk is analyzed by AI to extract topics, flashcards, and quizzes
+  </Step>
+  
+  <Step title="Database Storage">
+    Generated content is saved to Supabase and document status is updated to `ready`
+  </Step>
+</Steps>
+
+## Implementation Details
+
+### PDF Text Extraction
+
+The system uses PyPDF to extract text from all pages of the uploaded document:
+
+```python worker.py
+def extract_all_text_from_pdf(url):
+    print(f"   ⬇️ Descargando PDF completo: {url}...")
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception("Error al descargar PDF desde Supabase Storage")
+    
+    print("   📖 Leyendo PDF...")
+    f = BytesIO(response.content)
+    reader = PdfReader(f)
+    
+    full_text = ""
+    # Now reads ALL pages
+    for page in reader.pages:
+        text = page.extract_text()
+        if text:
+            full_text += text + "\n"
+            
+    return full_text
+```
+
+### AI-Powered Title Generation
+
+Before processing content, the system generates a contextual title and summary:
+
+```python worker.py
+def generate_global_context(full_text):
+    print("   📝 Generando título corto y resumen global...")
+    prompt = f"""
+    Lee el inicio y el final de este documento.
+    1. Crea un título corto, épico y atractivo (máximo 4 palabras)
+    2. Escribe un resumen de 2 a 3 oraciones motivadoras.
+    
+    Devuelve SOLO un JSON con este formato exacto:
+    {{
+        "short_title": "Nombre Corto del Mundo",
+        "summary": "Resumen motivador de lo que aprenderá."
+    }}
+    
+    Inicio del documento:
+    {full_text[:4000]}
+    ...
+    Final del documento:
+    {full_text[-4000:]}
+    """
+    # AI generates contextual metadata
+    response = model.generate_content(prompt)
+    return json.loads(clean_text)
+```
+
+### Content Chunking Strategy
+
+To handle large documents efficiently, the system divides text into manageable chunks:
+
+```python worker.py
+# Divide document into 25KB chunks
+chunk_size = 25000 
+chunks = [full_text[i:i+chunk_size] for i in range(0, len(full_text), chunk_size)]
+
+print(f"   ✂️ Documento dividido en {len(chunks)} bloques lógicos.")
+```
+
+<Accordion title="Why 25,000 characters?">
+This size balances AI context window limitations with processing efficiency. It's large enough to capture complete concepts but small enough to generate focused, high-quality educational content.
+</Accordion>
+
+### AI Content Extraction
+
+Each chunk is analyzed with a carefully crafted prompt:
+
+```python worker.py
+def generate_content_for_chunk(chunk_text, chunk_index):
+    print(f"   🧠 IA Analizando bloque {chunk_index}...")
+    
+    prompt = f"""
+    Actúa como un profesor universitario riguroso. Analiza esta sección.
+    
+    Tu tarea es extraer los conceptos clave y crear material de estudio. 
+    Dependiendo de la cantidad de información, crea entre 1 y 3 Temas.
+    
+    Reglas estrictas:
+    1. Si no hay información relevante, devuelve "topics": []
+    2. Cada tema debe tener entre 3 y 5 flashcards con conceptos CRUCIALES
+    3. Cada tema debe tener entre 2 y 4 quizzes (opción múltiple, 4 opciones)
+    4. Las opciones de los quizzes no deben ser obvias, incluye distractores creíbles
+    5. Solo responde con JSON puro, sin comillas Markdown
+    
+    Formato esperado:
+    {{
+        "topics": [
+            {{
+                "title": "Nombre del Tema (Específico, no general)",
+                "description": "Breve descripción",
+                "flashcards": [
+                    {{"front": "Concepto o Pregunta", "back": "Definición clara"}}
+                ],
+                "quizzes": [
+                    {{
+                        "question": "Pregunta analítica",
+                        "options": ["A", "B", "C", "D"],
+                        "correct_index": 0,
+                        "explanation": "Por qué es correcta."
+                    }}
+                ]
+            }}
+        ]
+    }}
+    """
+    
+    response = model.generate_content(prompt)
+    # Robust JSON cleaning
+    clean_text = response.text.replace("```json", "").replace("```", "").strip()
+    return json.loads(clean_text)
+```
+
+## Data Storage
+
+Generated content is stored in Supabase with the following structure:
+
+<CodeGroup>
+```python Topics Table
+for index, topic_data in enumerate(all_topics):
+    topic_response = supabase.table('topics').insert({
+        'document_id': doc_id,
+        'title': topic_data['title'],
+        'description': topic_data.get('description', ''),
+        'order_index': index
+    }).execute()
+    
+    topic_id = topic_response.data[0]['id']
+```
+
+```python Flashcards Table
+if 'flashcards' in topic_data:
+    flashcards_to_insert = []
+    for fc in topic_data['flashcards']:
+        flashcards_to_insert.append({
+            'document_id': doc_id,
+            'topic_id': topic_id,
+            'front_text': fc['front'],
+            'back_text': fc['back'],
+            'mastery_level': 1
+        })
+    if flashcards_to_insert:
+        supabase.table('flashcards').insert(flashcards_to_insert).execute()
+```
+
+```python Quizzes Table
+if 'quizzes' in topic_data:
+    quizzes_to_insert = []
+    for q in topic_data['quizzes']:
+        quizzes_to_insert.append({
+            'document_id': doc_id,
+            'topic_id': topic_id,
+            'question_text': q['question'],
+            'options': q['options'],
+            'correct_answer_index': q['correct_index'],
+            'explanation': q.get('explanation', '')
+        })
+    if quizzes_to_insert:
+        supabase.table('quizzes').insert(quizzes_to_insert).execute()
+```
+</CodeGroup>
+
+## Worker Process
+
+The worker runs continuously, polling for new documents:
+
+```python worker.py
+def main():
+    print("🤖 StudyQuest AI Worker (V4 - Auto-Nombramiento) iniciado...")
+    print("Esperando documentos en la cola...")
+    while True:
+        try:
+            response = supabase.table('documents').select("*").eq('status', 'processing').execute()
+            documents = response.data if hasattr(response, 'data') else response
+            
+            if documents and len(documents) > 0:
+                for doc in documents:
+                    process_document(doc)
+            else:
+                time.sleep(5)  # Poll every 5 seconds
+        except Exception as e:
+            print(f"Error de conexión en el loop principal: {e}")
+            time.sleep(10)
+```
+
+## Error Handling
+
+The system includes robust error handling:
+
+<Card title="Document-Level Errors" icon="triangle-exclamation">
+  If processing fails, the document status is set to `error` and error details are logged. Users are notified to try uploading again.
+</Card>
+
+<Card title="Chunk-Level Errors" icon="shield-check">
+  If a single chunk fails to parse, the system continues processing remaining chunks and only saves valid topics.
+</Card>
+
+```python worker.py
+try:
+    return json.loads(clean_text)
+except Exception as e:
+    print(f"     ⚠️ Advertencia: IA falló en parsear el bloque {chunk_index}: {e}")
+    return {"topics": []}  # Continue with empty result
+```
+
+## Configuration
+
+The worker requires the following environment variables:
+
+```bash .env
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_service_key
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+<Warning>
+The worker uses **gemini-2.5-flash** model which is optimized for following JSON instructions and has excellent instruction adherence.
+</Warning>
+
+## AI Model Selection
+
+StudyQuest uses Gemini 2.5 Flash specifically because:
+
+- **Excellent JSON compliance** - Reliably outputs structured data
+- **Fast processing** - Handles chunks quickly for near real-time generation
+- **Instruction following** - Accurately creates educational content with proper difficulty
+- **Cost-effective** - Efficient for processing large documents
+
+```python worker.py
+genai.configure(api_key=GEMINI_API_KEY)
+# Uses gemini-2.5-flash for excellent JSON instruction following
+model = genai.GenerativeModel('gemini-2.5-flash')
+```
+
+## Processing Timeline
+
+Typical processing times:
+
+- **Small PDF (10 pages)**: 30-60 seconds
+- **Medium PDF (50 pages)**: 2-4 minutes  
+- **Large PDF (200+ pages)**: 8-15 minutes
+
+<Note>
+Processing includes a 2-second delay between chunks to respect API rate limits and ensure consistent quality.
+</Note>

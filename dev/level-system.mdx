@@ -1,0 +1,436 @@
+---
+title: 'Level System'
+description: 'Implementation guide for the dynamic level progression system in StudyQuest'
+---
+
+## Overview
+
+The level system creates a gamified learning experience by organizing content into sequential levels (topics) that unlock as users progress. Each document generates multiple levels containing flashcards and quizzes.
+
+## Architecture
+
+```
+LevelBloc → LevelRepository → Supabase (topics, flashcards, quizzes tables)
+```
+
+## Core Entity
+
+### LevelEntity
+
+```dart lib/features/home/domain/entities/level_entity.dart
+enum LevelType { flashcards, quiz, mixed, exam }
+
+class LevelEntity {
+  final String id;
+  final String title;
+  final LevelType type;
+  final bool isLocked;
+  final bool isCompleted;
+  final int difficulty; // 1 to 5 stars
+
+  const LevelEntity({
+    required this.id,
+    required this.title,
+    required this.type,
+    this.isLocked = false,
+    this.isCompleted = false,
+    this.difficulty = 1,
+  });
+}
+```
+
+<Note>
+**Level Types:**
+- **flashcards**: Memory training with flip cards
+- **quiz**: Multiple choice questions
+- **mixed**: Combination of both
+- **exam**: Final assessment
+</Note>
+
+### LevelModel
+
+```dart lib/features/home/data/models/level_model.dart
+class LevelModel extends LevelEntity {
+  LevelModel({
+    required super.id,
+    required super.title,
+    required super.type,
+    required super.isLocked,
+  });
+
+  factory LevelModel.fromTopicJson(Map<String, dynamic> json, int index) {
+    // Alternate between flashcards and quiz
+    final isFlashcard = index % 2 == 0;
+    
+    return LevelModel(
+      id: json['id'] as String,
+      title: json['title'] as String,
+      type: isFlashcard ? LevelType.flashcards : LevelType.quiz,
+      // First level is unlocked, rest are locked
+      isLocked: index > 0,
+    );
+  }
+}
+```
+
+## State Management
+
+### Events and States
+
+```dart lib/features/home/presentation/bloc/level_bloc.dart
+// Events
+abstract class LevelEvent {}
+
+class LoadLevels extends LevelEvent {
+  final String documentId;
+  LoadLevels(this.documentId);
+}
+
+// States
+abstract class LevelState {}
+
+class LevelInitial extends LevelState {}
+
+class LevelLoading extends LevelState {}
+
+class LevelLoaded extends LevelState {
+  final List<LevelEntity> levels;
+  LevelLoaded(this.levels);
+}
+
+class LevelError extends LevelState {
+  final String message;
+  LevelError(this.message);
+}
+```
+
+### LevelBloc
+
+```dart lib/features/home/presentation/bloc/level_bloc.dart
+class LevelBloc extends Bloc<LevelEvent, LevelState> {
+  final LevelRepository repository;
+
+  LevelBloc(this.repository) : super(LevelInitial()) {
+    on<LoadLevels>((event, emit) async {
+      emit(LevelLoading());
+      try {
+        final levels = await repository.getLevelsForDocument(
+          event.documentId
+        );
+        emit(LevelLoaded(levels));
+      } catch (e) {
+        emit(LevelError("Error loading levels: $e"));
+      }
+    });
+  }
+}
+```
+
+## Repository Implementation
+
+### LevelRepository
+
+```dart lib/features/home/domain/repositories/level_repository.dart
+class LevelRepository {
+  final SupabaseClient supabase;
+
+  LevelRepository(this.supabase);
+
+  /// Get dynamic levels from 'topics' table
+  Future<List<LevelEntity>> getLevelsForDocument(String docId) async {
+    try {
+      final response = await supabase
+          .from('topics')
+          .select()
+          .eq('document_id', docId)
+          .order('order_index', ascending: true);
+
+      final List<dynamic> topicsData = response as List<dynamic>;
+      List<LevelEntity> levels = [];
+
+      if (topicsData.isNotEmpty) {
+        bool previousCompleted = true; // Level 1 always unlocked
+
+        for (int i = 0; i < topicsData.length; i++) {
+          final topic = topicsData[i];
+          final isFlashcard = i % 2 == 0;
+          final isCompleted = topic['is_completed'] == true;
+
+          levels.add(LevelEntity(
+            id: topic['id'].toString(),
+            title: topic['title'].toString(),
+            type: isFlashcard ? LevelType.flashcards : LevelType.quiz,
+            isLocked: !previousCompleted, // Lock if previous not complete
+            difficulty: i + 1,
+          ));
+
+          previousCompleted = isCompleted;
+        }
+      } else {
+        // Fallback for old documents without topics
+        final flashcardsData = await supabase
+            .from('flashcards')
+            .select('id')
+            .eq('document_id', docId)
+            .limit(1);
+        
+        final quizzesData = await supabase
+            .from('quizzes')
+            .select('id')
+            .eq('document_id', docId)
+            .limit(1);
+
+        if (flashcardsData.isNotEmpty) {
+          levels.add(const LevelEntity(
+            id: 'lvl_1_flash',
+            title: 'Key Concepts',
+            type: LevelType.flashcards,
+            isLocked: false,
+            difficulty: 1
+          ));
+        }
+        if (quizzesData.isNotEmpty) {
+          levels.add(const LevelEntity(
+            id: 'lvl_2_quiz',
+            title: 'Knowledge Test',
+            type: LevelType.quiz,
+            isLocked: false,
+            difficulty: 2
+          ));
+        }
+      }
+
+      return levels;
+    } catch (e) {
+      throw Exception('Error loading levels: $e');
+    }
+  }
+
+  /// Mark topic as completed
+  Future<void> markLevelCompleted(String topicId) async {
+    try {
+      if (topicId.startsWith('lvl_')) return; // Ignore legacy IDs
+      
+      await supabase
+          .from('topics')
+          .update({'is_completed': true})
+          .eq('id', topicId);
+    } catch (e) {
+      print('Error marking level as completed: $e');
+    }
+  }
+}
+```
+
+## Content Loading
+
+### Flashcards
+
+```dart
+Future<List<FlashcardEntity>> getFlashcards(
+  String docId, 
+  String topicId
+) async {
+  try {
+    if (topicId.startsWith('lvl_')) {
+      // Legacy: Load all flashcards for document
+      final response = await supabase
+          .from('flashcards')
+          .select()
+          .eq('document_id', docId);
+      
+      final List<dynamic> data = response as List<dynamic>;
+      return data.map((json) => FlashcardEntity.fromMap(json)).toList();
+    } else {
+      // Modern: Load flashcards for specific topic
+      final response = await supabase
+          .from('flashcards')
+          .select()
+          .eq('topic_id', topicId);
+
+      final List<dynamic> data = response as List<dynamic>;
+      
+      if (data.isEmpty) {
+        // Fallback to document-level flashcards
+        final fallbackResponse = await supabase
+            .from('flashcards')
+            .select()
+            .eq('document_id', docId);
+        final List<dynamic> fallbackData = fallbackResponse as List<dynamic>;
+        return fallbackData.map((json) => FlashcardEntity.fromMap(json)).toList();
+      }
+
+      return data.map((json) => FlashcardEntity.fromMap(json)).toList();
+    }
+  } catch (e) {
+    throw Exception('Error fetching flashcards: $e');
+  }
+}
+```
+
+### Quizzes
+
+```dart
+Future<List<QuizEntity>> getQuizzes(String docId, String topicId) async {
+  try {
+    if (topicId.startsWith('lvl_')) {
+      final response = await supabase
+          .from('quizzes')
+          .select()
+          .eq('document_id', docId);
+      final List<dynamic> data = response as List<dynamic>;
+      return data.map((json) => QuizEntity.fromMap(json)).toList();
+    } else {
+      final response = await supabase
+          .from('quizzes')
+          .select()
+          .eq('topic_id', topicId);
+
+      final List<dynamic> data = response as List<dynamic>;
+      
+      if (data.isEmpty) {
+        final fallbackResponse = await supabase
+            .from('quizzes')
+            .select()
+            .eq('document_id', docId);
+        final List<dynamic> fallbackData = fallbackResponse as List<dynamic>;
+        return fallbackData.map((json) => QuizEntity.fromMap(json)).toList();
+      }
+
+      return data.map((json) => QuizEntity.fromMap(json)).toList();
+    }
+  } catch (e) {
+    throw Exception('Error fetching quizzes: $e');
+  }
+}
+```
+
+## Progression Logic
+
+<Steps>
+  <Step title="User enters level map">
+    Load all levels for the document ordered by `order_index`.
+  </Step>
+  
+  <Step title="Check completion status">
+    First level is always unlocked. Subsequent levels check if previous level `is_completed = true`.
+  </Step>
+  
+  <Step title="User completes level">
+    After finishing all flashcards/quiz questions, call:
+    ```dart
+    await levelRepository.markLevelCompleted(topicId);
+    ```
+  </Step>
+  
+  <Step title="Unlock next level">
+    Re-fetch levels to update lock status:
+    ```dart
+    context.read<LevelBloc>().add(LoadLevels(documentId));
+    ```
+  </Step>
+</Steps>
+
+## Database Schema
+
+```sql
+CREATE TABLE topics (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  order_index INTEGER NOT NULL,
+  is_completed BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_topics_document ON topics(document_id);
+CREATE INDEX idx_topics_order ON topics(document_id, order_index);
+
+CREATE TABLE flashcards (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  topic_id UUID REFERENCES topics(id) ON DELETE CASCADE,
+  document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE quizzes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  topic_id UUID REFERENCES topics(id) ON DELETE CASCADE,
+  document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+  question TEXT NOT NULL,
+  options JSONB NOT NULL, -- Array of options
+  correct_answer TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+## Usage Example
+
+```dart
+class LevelMapPage extends StatelessWidget {
+  final String documentId;
+  
+  @override
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      create: (context) => LevelBloc(sl<LevelRepository>())
+        ..add(LoadLevels(documentId)),
+      child: BlocBuilder<LevelBloc, LevelState>(
+        builder: (context, state) {
+          if (state is LevelLoading) {
+            return CircularProgressIndicator();
+          } else if (state is LevelLoaded) {
+            return ListView.builder(
+              itemCount: state.levels.length,
+              itemBuilder: (context, index) {
+                final level = state.levels[index];
+                return LevelCard(
+                  level: level,
+                  onTap: level.isLocked ? null : () {
+                    // Navigate to flashcards or quiz
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => level.type == LevelType.flashcards
+                          ? FlashcardPage(documentId, level.id)
+                          : QuizPage(documentId, level.id),
+                      ),
+                    );
+                  },
+                );
+              },
+            );
+          } else if (state is LevelError) {
+            return Text('Error: ${state.message}');
+          }
+          return Container();
+        },
+      ),
+    );
+  }
+}
+```
+
+## Best Practices
+
+<ParamField path="Sequential unlocking" type="design-pattern">
+  Always enforce sequential progression. Users must complete Level N before accessing Level N+1.
+</ParamField>
+
+<ParamField path="Visual feedback" type="design-pattern">
+  Show lock icons, progress bars, and completion badges to indicate status.
+</ParamField>
+
+<ParamField path="Optimistic updates" type="performance">
+  Update local state immediately when completing a level, then sync with backend.
+</ParamField>
+
+<ParamField path="Difficulty scaling" type="game-design">
+  Use the `difficulty` field to adjust question complexity in higher levels.
+</ParamField>
+
+<ParamField path="Backward compatibility" type="migration">
+  Support legacy documents without topics table by falling back to document-level queries.
+</ParamField>

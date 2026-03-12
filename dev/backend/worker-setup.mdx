@@ -1,0 +1,254 @@
+---
+title: 'Worker Setup'
+description: 'Configure and deploy the Python backend worker for AI-powered document processing'
+---
+
+## Overview
+
+The StudyQuest backend worker is a Python service that continuously polls for uploaded PDF documents and transforms them into interactive study content using Google Gemini AI. It extracts text, generates flashcards and quizzes, and automatically creates engaging "world" titles.
+
+## Architecture
+
+The worker operates as a **long-running background process** that:
+
+1. Polls the Supabase database every 5 seconds for documents with `status = 'processing'`
+2. Downloads PDFs from Supabase Storage
+3. Extracts full text using PyPDF
+4. Chunks content and sends to Gemini AI for analysis
+5. Saves generated topics, flashcards, and quizzes back to Supabase
+6. Updates document status to `ready` or `error`
+
+<Warning>
+  The worker requires constant uptime to process documents in real-time. Consider using a process manager like `systemd`, `supervisor`, or containerizing with Docker.
+</Warning>
+
+## Prerequisites
+
+Before setting up the worker, ensure you have:
+
+- Python 3.8 or higher
+- A Supabase project with the StudyQuest schema
+- A Google Gemini API key (2.5-flash model recommended)
+- Network access to Supabase and Google APIs
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    Navigate to the backend directory:
+    
+    ```bash
+    cd ~/workspace/source/backend
+    ```
+  </Step>
+
+  <Step title="Create a virtual environment">
+    Isolate dependencies using a Python virtual environment:
+    
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all required packages from `requirements.txt`:
+    
+    ```bash
+    pip install -r requirements.txt
+    ```
+    
+    **Dependencies:**
+    - `supabase` - Database and storage client
+    - `google-generativeai` - Gemini AI SDK
+    - `pypdf` - PDF text extraction
+    - `python-dotenv` - Environment variable management
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create a `.env` file in the `backend/` directory:
+    
+    ```bash .env
+    SUPABASE_URL=https://your-project.supabase.co
+    SUPABASE_KEY=your-service-role-key
+    GEMINI_API_KEY=your-gemini-api-key
+    ```
+    
+    <Note>
+      Use the **service role key** (not anon key) for Supabase to bypass RLS policies during background processing.
+    </Note>
+  </Step>
+</Steps>
+
+## Environment Variables
+
+| Variable | Description | Required | Example |
+|----------|-------------|----------|----------|
+| `SUPABASE_URL` | Your Supabase project URL | Yes | `https://abc123.supabase.co` |
+| `SUPABASE_KEY` | Service role key with admin privileges | Yes | `eyJhbGc...` |
+| `GEMINI_API_KEY` | Google AI Studio API key | Yes | `AIzaSyD...` |
+
+### Validation
+
+The worker validates environment variables on startup (worker.py:19-20):
+
+```python
+if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY]):
+    raise Exception("❌ Faltan variables de entorno en backend/.env")
+```
+
+<Warning>
+  The worker will **crash immediately** if any required environment variable is missing. Always check logs on startup.
+</Warning>
+
+## Running the Worker
+
+<CodeGroup>
+```bash Development
+# Activate virtual environment first
+source venv/bin/activate
+
+# Run the worker
+python worker.py
+```
+
+```bash Production (systemd)
+# Create a systemd service file
+sudo nano /etc/systemd/system/studyquest-worker.service
+
+# Add configuration:
+[Unit]
+Description=StudyQuest AI Worker
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/backend
+Environment="PATH=/home/ubuntu/backend/venv/bin"
+ExecStart=/home/ubuntu/backend/venv/bin/python worker.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+# Enable and start
+sudo systemctl enable studyquest-worker
+sudo systemctl start studyquest-worker
+sudo systemctl status studyquest-worker
+```
+
+```dockerfile Docker
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY worker.py .
+COPY .env .
+
+CMD ["python", "worker.py"]
+```
+</CodeGroup>
+
+## Monitoring
+
+The worker outputs detailed console logs for monitoring:
+
+```bash
+🤖 StudyQuest AI Worker (V4 - Auto-Nombramiento) iniciado...
+Esperando documentos en la cola...
+
+🚀 Procesando documento: document.pdf (uuid-here)
+   ⬇️ Descargando PDF completo: https://...
+   📖 Leyendo PDF...
+   📝 Generando título corto y resumen global...
+   ✂️ Documento dividido en 3 bloques lógicos.
+   🧠 IA Analizando bloque 1...
+   🧠 IA Analizando bloque 2...
+   📑 IA encontró un total de 12 temas en todo el PDF. Guardando en DB...
+      ✓ Nivel 'Introduction to Networks' configurado.
+   ✅ Renombrando a 'Redes Cisco' y finalizando...
+🎉 ¡Proceso completado con éxito! El mundo está listo para jugarse.
+```
+
+### Key Log Indicators
+
+- `🚀 Procesando documento` - Worker picked up a document
+- `🧠 IA Analizando` - AI processing in progress
+- `⚠️ Advertencia: IA falló` - AI parsing error (non-fatal, continues)
+- `❌ Error crítico` - Fatal error, document marked as `error`
+- `🎉 ¡Proceso completado` - Success, document ready
+
+## Error Handling
+
+The worker implements multiple error handling strategies:
+
+### Document-Level Errors (worker.py:223-229)
+
+If a document fails processing, it's marked as `error` status:
+
+```python
+except Exception as e:
+    print(f"❌ Error crítico procesando documento {doc_id}: {e}")
+    traceback.print_exc() 
+    try:
+        supabase.table('documents').update({'status': 'error'}).eq('id', doc_id).execute()
+    except:
+        pass
+```
+
+### AI Parsing Errors (worker.py:98-100)
+
+If Gemini returns invalid JSON, the chunk is skipped:
+
+```python
+except Exception as e:
+    print(f"     ⚠️ Advertencia: IA falló en parsear el bloque {chunk_index}: {e}")
+    return {"topics": []}
+```
+
+### Connection Errors (worker.py:244-246)
+
+Database connection failures trigger automatic retry:
+
+```python
+except Exception as e:
+    print(f"Error de conexión en el loop principal: {e}")
+    time.sleep(10)
+```
+
+<Note>
+  The worker never crashes the entire process. Individual document failures are isolated and logged.
+</Note>
+
+## Performance Considerations
+
+- **Polling Interval:** 5 seconds (worker.py:243) - can be adjusted based on load
+- **AI Rate Limiting:** 2-second delay between chunks (worker.py:161) to avoid quota issues
+- **Chunk Size:** 25,000 characters (worker.py:151) - optimized for Gemini 2.5-flash context window
+- **Memory Usage:** Loads entire PDF into memory - monitor for large documents (>100 pages)
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Worker exits immediately | Missing environment variables | Check `.env` file exists and contains all 3 variables |
+| Documents stuck in `processing` | Worker not running | Start worker and check logs |
+| `Error al descargar PDF` | Invalid file_url or network issue | Verify Supabase Storage bucket is public or signed URLs are valid |
+| AI parsing failures | Gemini API quota exceeded | Check API quota in Google AI Studio |
+| Empty flashcards/quizzes | PDF is scanned image without OCR | Use OCR tool before uploading or choose text-based PDFs |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="AI Integration" icon="brain" href="/dev/backend/ai-integration">
+    Deep dive into Gemini AI prompt engineering
+  </Card>
+  <Card title="PDF Processing" icon="file-pdf" href="/dev/backend/pdf-processing">
+    Learn about chunking and text extraction
+  </Card>
+</CardGroup>

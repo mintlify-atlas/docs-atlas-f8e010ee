@@ -1,0 +1,180 @@
+---
+title: 'Architecture Overview'
+description: 'High-level overview of StudyQuest architecture and design principles'
+icon: 'sitemap'
+---
+
+## System Architecture
+
+StudyQuest is built using a modern, scalable architecture that separates concerns between the mobile client and backend processing. The application follows **Clean Architecture** principles to ensure maintainability, testability, and flexibility.
+
+## Core Components
+
+<CardGroup cols={2}>
+  <Card title="Flutter Mobile App" icon="mobile">
+    Cross-platform mobile application built with Flutter, implementing Clean Architecture and BLoC pattern for state management.
+  </Card>
+  
+  <Card title="Backend Worker" icon="robot">
+    Python-based AI worker that processes PDFs, generates study content using Google Gemini AI, and manages the content pipeline.
+  </Card>
+  
+  <Card title="Supabase Backend" icon="database">
+    Backend-as-a-Service providing authentication, PostgreSQL database, real-time subscriptions, and file storage.
+  </Card>
+  
+  <Card title="Google Gemini AI" icon="brain">
+    Advanced AI model (gemini-2.5-flash) for content analysis, flashcard generation, and quiz creation from study materials.
+  </Card>
+</CardGroup>
+
+## Architecture Layers
+
+The mobile application is organized into three distinct layers following Clean Architecture principles:
+
+<Steps>
+  <Step title="Presentation Layer">
+    Contains UI components, pages, and BLoC state management. This layer handles user interactions and displays data.
+    
+    **Key Components:**
+    - Flutter widgets and pages
+    - BLoC (Business Logic Component) for state management
+    - UI-specific models and formatters
+  </Step>
+  
+  <Step title="Domain Layer">
+    The core business logic layer that is completely independent of external frameworks. Contains entities, repository contracts, and use cases.
+    
+    **Key Components:**
+    - Pure Dart entities (UserEntity, DocumentEntity, LevelEntity)
+    - Repository interfaces (abstract classes)
+    - Business rules and validation logic
+  </Step>
+  
+  <Step title="Data Layer">
+    Handles data operations, API calls, and data source management. Implements the repository contracts defined in the domain layer.
+    
+    **Key Components:**
+    - Repository implementations
+    - Remote data sources (API clients)
+    - Data models and mappers
+    - Supabase integration
+  </Step>
+</Steps>
+
+## Technology Stack
+
+### Mobile Application
+
+| Technology | Purpose |
+|------------|----------|
+| **Flutter** | Cross-platform mobile framework |
+| **Dart** | Programming language |
+| **flutter_bloc** | State management using BLoC pattern |
+| **get_it** | Dependency injection container |
+| **dartz** | Functional programming (Either type for error handling) |
+| **equatable** | Value equality for entities and states |
+| **supabase_flutter** | Backend integration client |
+
+### Backend Services
+
+| Technology | Purpose |
+|------------|----------|
+| **Python 3.x** | Backend worker language |
+| **Supabase** | Authentication, database, storage |
+| **PostgreSQL** | Relational database |
+| **Google Gemini AI** | Content generation and analysis |
+| **pypdf** | PDF text extraction |
+
+## Data Flow
+
+<Accordion title="Document Upload Flow">
+  1. User selects a PDF file in the Flutter app
+  2. App uploads file to Supabase Storage
+  3. Document record is created with status `processing`
+  4. Backend worker detects new document
+  5. Worker extracts text, analyzes content with AI
+  6. Generated flashcards, quizzes, and topics are saved to database
+  7. Document status is updated to `ready`
+  8. App receives real-time update and displays the new content
+</Accordion>
+
+<Accordion title="Authentication Flow">
+  1. User enters credentials in login/register page
+  2. Presentation layer dispatches event to AuthBloc
+  3. AuthBloc calls AuthRepository (domain layer)
+  4. Repository implementation calls Supabase API
+  5. On success, user data is returned through layers
+  6. BLoC emits AuthSuccess state
+  7. UI navigates to home screen
+</Accordion>
+
+<Accordion title="Study Session Flow">
+  1. User selects a document world
+  2. LevelBloc loads available levels/topics from database
+  3. User starts a flashcard or quiz level
+  4. Content is loaded from Supabase
+  5. User interacts with study material
+  6. Progress is saved to database
+  7. XP and achievements are updated
+  8. Next level is unlocked if completed
+</Accordion>
+
+## Design Principles
+
+<Note>
+  **Dependency Rule**: Dependencies only point inward. The domain layer has zero dependencies on external frameworks. This ensures that business logic remains pure and testable.
+</Note>
+
+### Key Principles
+
+- **Separation of Concerns**: Each layer has a single, well-defined responsibility
+- **Dependency Inversion**: High-level modules don't depend on low-level modules; both depend on abstractions
+- **Single Responsibility**: Each class has one reason to change
+- **Testability**: Business logic can be tested without UI or database
+- **Scalability**: New features can be added without modifying existing code
+
+## Error Handling
+
+StudyQuest uses functional error handling with the `Either` type from the `dartz` package:
+
+```dart
+// Repository returns Either<Failure, Success>
+Future<Either<Failure, UserEntity>> loginWithEmail({
+  required String email,
+  required String password,
+});
+
+// Usage in BLoC
+final result = await authRepository.loginWithEmail(...);
+result.fold(
+  (failure) => emit(AuthFailure(failure.message)),  // Left = Error
+  (user) => emit(AuthSuccess(user)),                // Right = Success
+);
+```
+
+This approach:
+- Makes error handling explicit and type-safe
+- Eliminates uncaught exceptions
+- Forces developers to handle both success and failure cases
+- Provides clear error messages to users
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Clean Architecture" icon="layer-group" href="/architecture/clean-architecture">
+    Deep dive into the three-layer architecture implementation
+  </Card>
+  
+  <Card title="State Management" icon="code-branch" href="/architecture/state-management">
+    Learn how BLoC pattern manages application state
+  </Card>
+  
+  <Card title="Backend Worker" icon="robot" href="/architecture/backend-worker">
+    Explore the AI-powered content generation pipeline
+  </Card>
+  
+  <Card title="Dependency Injection" icon="plug" href="/api/core/dependency-injection">
+    Understand how dependencies are managed with GetIt
+  </Card>
+</CardGroup>

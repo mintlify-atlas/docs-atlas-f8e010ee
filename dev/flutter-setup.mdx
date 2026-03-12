@@ -1,0 +1,572 @@
+---
+title: 'Flutter Setup'
+description: 'Configure and run the StudyQuest Flutter application'
+---
+
+## Overview
+
+This guide covers Flutter-specific configuration for StudyQuest, including running the app, configuring dependencies, and understanding the app architecture.
+
+<Info>
+Ensure you have completed the [Environment Setup](/dev/environment-setup) before proceeding.
+</Info>
+
+## Project Configuration
+
+### SDK Constraints
+
+StudyQuest requires specific SDK versions as defined in `pubspec.yaml:22`:
+
+```yaml
+environment:
+  sdk: ^3.10.7
+```
+
+<Warning>
+**Important**: The project requires Dart SDK 3.10.7 or higher. Using an older version will cause compilation errors.
+</Warning>
+
+### Verify SDK Version
+
+```bash
+# Check Flutter/Dart version
+flutter --version
+
+# Expected output:
+Flutter 3.10.7 • channel stable
+Dart 3.10.7 • DevTools 2.x.x
+```
+
+## Installing Dependencies
+
+<Steps>
+  <Step title="Navigate to Project Directory">
+    ```bash
+    cd study_quest
+    ```
+  </Step>
+
+  <Step title="Install Flutter Packages">
+    ```bash
+    flutter pub get
+    ```
+    
+    This installs all packages from `pubspec.yaml:30-62`:
+    - **State Management**: flutter_bloc, equatable
+    - **Backend**: supabase_flutter, http
+    - **UI/Animations**: rive, confetti
+    - **Platform Services**: flutter_tts, flutter_local_notifications, audioplayers
+    - **Utilities**: get_it, dartz, file_picker
+  </Step>
+
+  <Step title="Verify Installation">
+    ```bash
+    flutter doctor -v
+    flutter pub outdated
+    ```
+    
+    Ensure no critical issues are reported.
+  </Step>
+</Steps>
+
+## Architecture Overview
+
+StudyQuest follows **Clean Architecture** principles with the **BLoC pattern** for state management.
+
+### Project Structure
+
+```
+lib/
+├── main.dart                     # App entry point
+├── injection_container.dart      # Dependency injection setup
+├── core/
+│   ├── errors/
+│   │   └── failures.dart        # Error handling
+│   ├── services/
+│   │   └── notification_service.dart  # Local notifications
+│   ├── theme/
+│   │   └── app_theme.dart       # App theming
+│   └── widgets/
+│       └── reactive_avatar.dart  # Reusable UI components
+└── features/
+    ├── auth/                    # Authentication feature
+    │   ├── data/
+    │   │   ├── datasources/
+    │   │   │   └── auth_remote_data_source.dart
+    │   │   ├── models/
+    │   │   │   └── user_model.dart
+    │   │   └── repositories/
+    │   │       └── auth_repository_impl.dart
+    │   ├── domain/
+    │   │   ├── entities/
+    │   │   │   ├── user_entity.dart
+    │   │   │   └── profile_entity.dart
+    │   │   └── repositories/
+    │   │       └── auth_repository.dart
+    │   └── presentation/
+    │       ├── bloc/
+    │       │   ├── auth_bloc.dart
+    │       │   ├── auth_event.dart
+    │       │   └── auth_state.dart
+    │       └── pages/
+    │           ├── welcome_page.dart
+    │           ├── login_page.dart
+    │           └── register_page.dart
+    └── home/                    # Home & learning features
+        ├── data/
+        ├── domain/
+        └── presentation/
+```
+
+## App Initialization
+
+The app initializes in `main.dart:11-25` with three critical steps:
+
+### 1. Notification Service
+
+```dart main.dart
+await NotificationService.init();
+```
+
+Initializes local notifications for streak reminders.
+
+### 2. Supabase Initialization
+
+```dart main.dart
+await Supabase.initialize(
+  url: Secrets.supabaseUrl,
+  anonKey: Secrets.supabaseAnonKey,
+);
+```
+
+<Warning>
+This requires a `secrets.dart` file with your Supabase credentials. See [Supabase Configuration](/dev/supabase-configuration).
+</Warning>
+
+### 3. Dependency Injection
+
+```dart main.dart
+await di.init();
+```
+
+Registers all services and repositories using GetIt (`injection_container.dart:23-51`).
+
+## Dependency Injection Setup
+
+StudyQuest uses **GetIt** for dependency injection. The setup is in `injection_container.dart`:
+
+```dart injection_container.dart
+final sl = GetIt.instance; // Service Locator
+
+Future<void> init() async {
+  // Features - Auth
+  sl.registerFactory(() => AuthBloc(authRepository: sl()));
+  sl.registerLazySingleton<AuthRepository>(
+    () => AuthRepositoryImpl(remoteDataSource: sl()),
+  );
+  sl.registerLazySingleton<AuthRemoteDataSource>(
+    () => AuthRemoteDataSourceImpl(supabaseClient: sl()),
+  );
+
+  // Features - Home
+  sl.registerFactory(() => HomeBloc(homeRepository: sl()));
+  sl.registerLazySingleton<HomeRepository>(
+    () => HomeRepositoryImpl(remoteDataSource: sl()),
+  );
+  sl.registerLazySingleton<HomeRemoteDataSource>(
+    () => HomeRemoteDataSourceImpl(supabaseClient: sl()),
+  );
+
+  // Features - Levels
+  sl.registerFactory(() => LevelBloc(sl()));
+  sl.registerLazySingleton(() => LevelRepository(sl()));
+
+  // External (Supabase Client)
+  sl.registerLazySingleton(() => Supabase.instance.client);
+}
+```
+
+### Dependency Types
+
+- **Factory**: New instance every time (e.g., BLoCs)
+- **LazySingleton**: Single instance created when first accessed (e.g., Repositories)
+
+## Running the Application
+
+<Steps>
+  <Step title="Start a Device or Emulator">
+    <Tabs>
+      <Tab title="Physical Device">
+        **Android**:
+        1. Enable Developer Options on your device
+        2. Enable USB Debugging
+        3. Connect via USB
+        
+        **iOS**:
+        1. Connect iPhone/iPad via USB
+        2. Trust the computer when prompted
+        3. Open Xcode and register your device
+      </Tab>
+      
+      <Tab title="Emulator">
+        **Android Emulator**:
+        ```bash
+        # List available emulators
+        flutter emulators
+        
+        # Launch emulator
+        flutter emulators --launch <emulator_id>
+        ```
+        
+        **iOS Simulator** (macOS only):
+        ```bash
+        open -a Simulator
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="List Available Devices">
+    ```bash
+    flutter devices
+    ```
+    
+    You should see at least one device listed.
+  </Step>
+
+  <Step title="Run the App">
+    <CodeGroup>
+    ```bash Debug Mode
+    flutter run
+    ```
+    
+    ```bash Specific Device
+    flutter run -d <device_id>
+    ```
+    
+    ```bash Release Mode
+    flutter run --release
+    ```
+    
+    ```bash Profile Mode
+    flutter run --profile
+    ```
+    </CodeGroup>
+    
+    <Info>
+    Debug mode enables hot reload, hot restart, and debugging tools.
+    </Info>
+  </Step>
+
+  <Step title="Verify App Launch">
+    The app should launch and display the **WelcomePage** (`main.dart:43`).
+    
+    Expected screens:
+    1. Welcome/Onboarding
+    2. Login/Register options
+    3. Main home screen (after authentication)
+  </Step>
+</Steps>
+
+## Development Workflow
+
+### Hot Reload & Hot Restart
+
+<Tabs>
+  <Tab title="Hot Reload (r)">
+    Injects updated source code into the running app **without restarting**.
+    
+    ```bash
+    # Press 'r' in the terminal while app is running
+    r
+    ```
+    
+    **Use for**:
+    - UI changes
+    - Widget updates
+    - Method implementations
+    
+    **Preserves**:
+    - App state
+    - Variable values
+    - Navigation stack
+  </Tab>
+  
+  <Tab title="Hot Restart (R)">
+    Restarts the app **from scratch** but keeps the app running.
+    
+    ```bash
+    # Press 'R' in the terminal while app is running
+    R
+    ```
+    
+    **Use for**:
+    - State changes
+    - Global variable changes
+    - main() modifications
+    
+    **Resets**:
+    - All state
+    - Navigation
+    - Variables
+  </Tab>
+  
+  <Tab title="Full Restart">
+    Completely rebuild and reinstall the app.
+    
+    ```bash
+    # Stop the app (Ctrl+C), then
+    flutter run
+    ```
+    
+    **Use for**:
+    - Dependency changes
+    - Native code changes
+    - Asset additions
+  </Tab>
+</Tabs>
+
+## Key Features & Packages
+
+### State Management (BLoC Pattern)
+
+StudyQuest uses **flutter_bloc** (^8.1.3) for state management:
+
+```dart main.dart
+MultiBlocProvider(
+  providers: [
+    BlocProvider(create: (_) => di.sl<AuthBloc>()),
+  ],
+  child: MaterialApp(...),
+)
+```
+
+**BLoC Components**:
+- **Events**: User actions (e.g., LoginRequested)
+- **States**: UI states (e.g., AuthLoading, AuthSuccess)
+- **Bloc**: Business logic processor
+
+### Animations
+
+**Rive** (^0.13.1) for interactive animations:
+- Character animations
+- Interactive elements
+- Gamification effects
+
+```yaml pubspec.yaml
+flutter:
+  assets:
+    - assets/rive/
+```
+
+### Audio & TTS
+
+<CardGroup cols={2}>
+  <Card title="Text-to-Speech" icon="volume-high">
+    **flutter_tts** (^4.2.5)
+    
+    Reads study content aloud for accessibility.
+  </Card>
+  
+  <Card title="Audio Playback" icon="music">
+    **audioplayers** (^6.6.0)
+    
+    Plays sound effects and feedback audio.
+  </Card>
+</CardGroup>
+
+### Notifications
+
+**flutter_local_notifications** (^17.1.2) with **timezone** (^0.9.0):
+
+```dart auth_remote_data_source.dart:169
+// Schedule streak reminder for next day
+await NotificationService.scheduleStreakReminder();
+```
+
+Used for:
+- Daily streak reminders
+- Study session prompts
+- Achievement notifications
+
+### File Handling
+
+**file_picker** (^8.0.0) for PDF uploads:
+
+```dart home_remote_data_source.dart:17-50
+Future<DocumentModel> uploadDocument(File file, String fileName) async {
+  // Upload to Supabase Storage
+  await supabaseClient.storage.from('pdfs').upload(storagePath, file);
+  
+  // Save reference to database
+  await supabaseClient.from('documents').insert({...});
+}
+```
+
+## Building for Production
+
+<Tabs>
+  <Tab title="Android APK">
+    ```bash
+    # Build release APK
+    flutter build apk --release
+    
+    # Output: build/app/outputs/flutter-apk/app-release.apk
+    ```
+    
+    **App Bundle (recommended for Play Store)**:
+    ```bash
+    flutter build appbundle --release
+    
+    # Output: build/app/outputs/bundle/release/app-release.aab
+    ```
+  </Tab>
+  
+  <Tab title="iOS">
+    ```bash
+    # Build iOS release
+    flutter build ios --release
+    
+    # Or build archive for App Store
+    flutter build ipa
+    ```
+    
+    <Warning>
+    iOS builds require a Mac with Xcode and an Apple Developer account.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Web">
+    ```bash
+    # Build for web
+    flutter build web --release
+    
+    # Output: build/web/
+    ```
+    
+    Deploy the `build/web` directory to your hosting provider.
+  </Tab>
+</Tabs>
+
+## Code Quality
+
+### Linting
+
+StudyQuest uses **flutter_lints** (^6.0.0):
+
+```bash
+# Analyze code
+flutter analyze
+
+# Fix auto-fixable issues
+dart fix --apply
+```
+
+### Formatting
+
+```bash
+# Format all Dart files
+flutter format .
+
+# Format specific file
+flutter format lib/main.dart
+
+# Check formatting without modifying
+flutter format --set-exit-if-changed .
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Missing Secrets File">
+    **Error**: `Error: Cannot run with sound null safety, because the following dependencies don't support null safety: lib/core/secrets.dart`
+    
+    **Solution**: Create the secrets file. See [Supabase Configuration](/dev/supabase-configuration).
+  </Accordion>
+
+  <Accordion title="BLoC Not Found">
+    **Error**: `Bad state: GetIt: Object/factory with type X is not registered`
+    
+    **Solution**:
+    ```dart
+    // Ensure the dependency is registered in injection_container.dart
+    sl.registerFactory(() => YourBloc(repository: sl()));
+    ```
+    
+    Then hot restart the app.
+  </Accordion>
+
+  <Accordion title="Asset Not Loading">
+    **Error**: `Unable to load asset: assets/images/...`
+    
+    **Solution**:
+    1. Verify the asset exists in the correct directory
+    2. Check `pubspec.yaml:76-80` includes the asset:
+    ```yaml
+    flutter:
+      assets:
+        - assets/images/
+        - assets/rive/
+        - assets/sounds/
+    ```
+    3. Run `flutter clean && flutter pub get`
+    4. Rebuild the app
+  </Accordion>
+
+  <Accordion title="Supabase Connection Issues">
+    **Error**: `SupabaseException: Failed to connect`
+    
+    **Solution**:
+    1. Verify `secrets.dart` has correct URL and keys
+    2. Check internet connection
+    3. Verify Supabase project is active
+    4. Check Supabase dashboard for API status
+  </Accordion>
+
+  <Accordion title="Gradle Build Failures">
+    **Error**: `Execution failed for task ':app:processDebugResources'`
+    
+    **Solution**:
+    ```bash
+    cd android
+    ./gradlew clean
+    cd ..
+    flutter clean
+    flutter pub get
+    flutter run
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Useful Development Commands
+
+```bash
+# Open DevTools
+flutter pub global activate devtools
+flutter pub global run devtools
+
+# Generate code coverage
+flutter test --coverage
+
+# Run specific test file
+flutter test test/auth_test.dart
+
+# Clear build cache
+flutter clean
+
+# Update dependencies
+flutter pub upgrade
+
+# Check for outdated packages
+flutter pub outdated
+```
+
+## Next Steps
+
+<Card title="Supabase Configuration" icon="database" href="/dev/supabase-configuration">
+  Set up Supabase backend, configure authentication, and connect the database
+</Card>
+
+<Note>
+For questions about Flutter development, visit the [Flutter documentation](https://docs.flutter.dev) or the [Flutter community](https://flutter.dev/community).
+</Note>

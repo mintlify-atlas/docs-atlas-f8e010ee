@@ -1,0 +1,484 @@
+---
+title: 'Document Management'
+description: 'Implementation guide for PDF upload, storage, and AI processing in StudyQuest'
+---
+
+## Overview
+
+The document management system handles PDF uploads to Supabase Storage, metadata tracking in the database, and integration with AI processing. It follows Clean Architecture with BLoC state management.
+
+## Architecture
+
+```
+UI → HomeBloc → HomeRepository → HomeRemoteDataSource → Supabase (Storage + Database)
+```
+
+## Core Entities
+
+### DocumentEntity
+
+```dart lib/features/home/domain/entities/document_entity.dart
+class DocumentEntity extends Equatable {
+  final String id;
+  final String title;
+  final String fileUrl;
+  final String? summary; // Null if AI processing not complete
+  final String status;   // 'processing', 'ready', 'error'
+  final DateTime uploadDate;
+
+  const DocumentEntity({
+    required this.id,
+    required this.title,
+    required this.fileUrl,
+    this.summary,
+    required this.status,
+    required this.uploadDate,
+  });
+
+  @override
+  List<Object?> get props => [id, title, fileUrl, status];
+}
+```
+
+<Note>
+The `status` field tracks AI processing:
+- **processing**: PDF uploaded, AI is generating content
+- **ready**: Flashcards and quizzes are available
+- **error**: Processing failed
+</Note>
+
+### DocumentModel
+
+The data layer model handles JSON serialization:
+
+```dart lib/features/home/data/models/document_model.dart
+class DocumentModel extends DocumentEntity {
+  const DocumentModel({
+    required super.id,
+    required super.title,
+    required super.fileUrl,
+    super.summary,
+    required super.status,
+    required super.uploadDate,
+  });
+
+  factory DocumentModel.fromJson(Map<String, dynamic> json) {
+    return DocumentModel(
+      id: json['id'],
+      title: json['title'],
+      fileUrl: json['file_url'],
+      summary: json['summary_text'],
+      status: json['status'] ?? 'processing',
+      uploadDate: DateTime.parse(json['created_at']),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'title': title,
+      'file_url': fileUrl,
+      'status': status,
+    };
+  }
+}
+```
+
+## State Management
+
+### Events
+
+```dart lib/features/home/presentation/bloc/home_event.dart
+abstract class HomeEvent extends Equatable {
+  const HomeEvent();
+  @override
+  List<Object> get props => [];
+}
+
+class LoadDocuments extends HomeEvent {}
+
+class UploadDocumentRequested extends HomeEvent {
+  final File file;
+  final String fileName;
+
+  const UploadDocumentRequested(this.file, this.fileName);
+
+  @override
+  List<Object> get props => [file, fileName];
+}
+
+class DeleteDocumentRequested extends HomeEvent {
+  final String documentId;
+
+  const DeleteDocumentRequested(this.documentId);
+
+  @override
+  List<Object> get props => [documentId];
+}
+```
+
+### States
+
+```dart lib/features/home/presentation/bloc/home_state.dart
+abstract class HomeState extends Equatable {
+  const HomeState();
+  @override
+  List<Object?> get props => [];
+}
+
+class HomeInitial extends HomeState {}
+
+class HomeLoading extends HomeState {}
+
+class HomeLoaded extends HomeState {
+  final List<DocumentEntity> documents;
+  final dynamic profile;
+
+  const HomeLoaded(this.documents, {this.profile});
+
+  @override
+  List<Object?> get props => [documents, profile];
+}
+
+class HomeError extends HomeState {
+  final String message;
+  const HomeError(this.message);
+
+  @override
+  List<Object> get props => [message];
+}
+```
+
+### HomeBloc Implementation
+
+```dart lib/features/home/presentation/bloc/home_bloc.dart
+class HomeBloc extends Bloc<HomeEvent, HomeState> {
+  final HomeRepository homeRepository;
+
+  HomeBloc({required this.homeRepository}) : super(HomeInitial()) {
+    
+    // Load documents and user profile
+    on<LoadDocuments>((event, emit) async {
+      emit(HomeLoading());
+      
+      final result = await homeRepository.getMyDocuments();
+      
+      await result.fold(
+        (failure) async {
+          emit(HomeError(failure.message));
+        },
+        (documents) async {
+          // Also fetch user profile
+          final profileResult = await di.sl<AuthRepository>().getCurrentProfile();
+          
+          ProfileEntity? userProfile;
+          profileResult.fold(
+            (fail) => null,
+            (profile) => userProfile = profile,
+          );
+          
+          emit(HomeLoaded(documents, profile: userProfile));
+        }
+      );
+    });
+
+    // Upload document
+    on<UploadDocumentRequested>((event, emit) async {
+      emit(HomeLoading());
+      
+      final result = await homeRepository.uploadDocument(
+        event.file, 
+        event.fileName
+      );
+      
+      result.fold(
+        (failure) => emit(HomeError(failure.message)),
+        (newDoc) {
+          add(LoadDocuments()); // Refresh list
+        },
+      );
+    });
+
+    // Delete document
+    on<DeleteDocumentRequested>((event, emit) async {
+      emit(HomeLoading());
+      
+      final result = await homeRepository.deleteDocument(event.documentId);
+      
+      result.fold(
+        (failure) => emit(HomeError(failure.message)),
+        (_) {
+          add(LoadDocuments()); // Refresh list
+        },
+      );
+    });
+  }
+}
+```
+
+## Data Layer
+
+### Repository Interface
+
+```dart lib/features/home/domain/repositories/home_repository.dart
+abstract class HomeRepository {
+  Future<Either<Failure, List<DocumentEntity>>> getMyDocuments();
+  Future<Either<Failure, DocumentEntity>> uploadDocument(File file, String fileName);
+  Future<Either<Failure, void>> deleteDocument(String documentId);
+}
+```
+
+### Repository Implementation
+
+```dart lib/features/home/data/repositories/home_repository_impl.dart
+class HomeRepositoryImpl implements HomeRepository {
+  final HomeRemoteDataSource remoteDataSource;
+
+  HomeRepositoryImpl({required this.remoteDataSource});
+
+  @override
+  Future<Either<Failure, DocumentEntity>> uploadDocument(
+    File file, 
+    String fileName
+  ) async {
+    try {
+      final document = await remoteDataSource.uploadDocument(file, fileName);
+      return Right(document);
+    } on Failure catch (e) {
+      return Left(e);
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, List<DocumentEntity>>> getMyDocuments() async {
+    try {
+      final documents = await remoteDataSource.getMyDocuments();
+      return Right(documents);
+    } on Failure catch (e) {
+      return Left(e);
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> deleteDocument(String documentId) async {
+    try {
+      await Supabase.instance.client
+          .from('documents')
+          .delete()
+          .eq('id', documentId);
+      return const Right(null);
+    } catch (e) {
+      return Left(ServerFailure('Error deleting document: $e'));
+    }
+  }
+}
+```
+
+### Remote Data Source
+
+This layer handles direct communication with Supabase:
+
+```dart lib/features/home/data/datasources/home_remote_data_source.dart
+class HomeRemoteDataSourceImpl implements HomeRemoteDataSource {
+  final SupabaseClient supabaseClient;
+
+  HomeRemoteDataSourceImpl({required this.supabaseClient});
+
+  @override
+  Future<DocumentModel> uploadDocument(File file, String fileName) async {
+    try {
+      final user = supabaseClient.auth.currentUser;
+      if (user == null) throw const ServerFailure("User not authenticated");
+
+      // 1. Upload file to Storage bucket 'pdfs'
+      final fileExt = fileName.split('.').last;
+      final uniqueName = '${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+      final storagePath = '${user.id}/$uniqueName';
+
+      await supabaseClient.storage.from('pdfs').upload(
+        storagePath,
+        file,
+        fileOptions: const FileOptions(
+          cacheControl: '3600',
+          upsert: false
+        ),
+      );
+
+      // 2. Get public URL
+      final publicUrl = supabaseClient.storage
+          .from('pdfs')
+          .getPublicUrl(storagePath);
+
+      // 3. Save metadata to database
+      final response = await supabaseClient.from('documents').insert({
+        'user_id': user.id,
+        'title': fileName,
+        'file_url': publicUrl,
+        'status': 'processing',
+      }).select().single();
+
+      return DocumentModel.fromJson(response);
+    } catch (e) {
+      throw ServerFailure('Error uploading document: $e');
+    }
+  }
+
+  @override
+  Future<List<DocumentModel>> getMyDocuments() async {
+    try {
+      final user = supabaseClient.auth.currentUser;
+      if (user == null) throw const ServerFailure("User not authenticated");
+
+      final response = await supabaseClient
+          .from('documents')
+          .select()
+          .eq('user_id', user.id)
+          .order('created_at', ascending: false);
+
+      return (response as List)
+          .map((doc) => DocumentModel.fromJson(doc))
+          .toList();
+    } catch (e) {
+      throw ServerFailure('Error fetching documents: $e');
+    }
+  }
+}
+```
+
+## Upload Flow
+
+<Steps>
+  <Step title="User selects PDF">
+    File picker opens and user selects a PDF file from their device.
+  </Step>
+  
+  <Step title="Upload event dispatched">
+    ```dart
+    context.read<HomeBloc>().add(
+      UploadDocumentRequested(file, fileName)
+    );
+    ```
+  </Step>
+  
+  <Step title="File uploaded to Supabase Storage">
+    File is stored in `pdfs/{user_id}/{timestamp}.pdf` with a unique name to prevent collisions.
+  </Step>
+  
+  <Step title="Metadata saved to database">
+    Document record created in `documents` table with:
+    - `user_id`: Current user
+    - `title`: Original filename
+    - `file_url`: Public URL from storage
+    - `status`: 'processing'
+  </Step>
+  
+  <Step title="AI processing triggered">
+    Supabase Edge Function or background job processes the PDF to generate flashcards and quizzes.
+  </Step>
+  
+  <Step title="Status updated">
+    Once AI completes, status changes to 'ready' and content becomes available.
+  </Step>
+</Steps>
+
+## Database Schema
+
+```sql
+CREATE TABLE documents (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  file_url TEXT NOT NULL,
+  summary_text TEXT,
+  status TEXT DEFAULT 'processing',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_documents_user_id ON documents(user_id);
+CREATE INDEX idx_documents_status ON documents(status);
+```
+
+## Storage Configuration
+
+<Note>
+**Supabase Storage Bucket Settings:**
+
+- **Bucket name:** `pdfs`
+- **Public:** Yes (for easy URL access)
+- **File size limit:** 50MB
+- **Allowed MIME types:** `application/pdf`
+</Note>
+
+## Usage Example
+
+```dart
+FloatingActionButton(
+  onPressed: () async {
+    // 1. Pick file
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    
+    if (result != null && result.files.single.path != null) {
+      final file = File(result.files.single.path!);
+      final fileName = result.files.single.name;
+      
+      // 2. Dispatch upload event
+      context.read<HomeBloc>().add(
+        UploadDocumentRequested(file, fileName)
+      );
+    }
+  },
+  child: const Icon(Icons.add),
+)
+```
+
+## Error Handling
+
+<CodeGroup>
+```dart Upload Errors
+try {
+  await uploadDocument(file, fileName);
+} on StorageException catch (e) {
+  if (e.statusCode == '413') {
+    throw ServerFailure('File too large (max 50MB)');
+  } else if (e.statusCode == '415') {
+    throw ServerFailure('Only PDF files are allowed');
+  }
+  throw ServerFailure('Storage error: ${e.message}');
+}
+```
+
+```dart Network Errors
+catch (e) {
+  if (e is SocketException) {
+    throw ServerFailure('No internet connection');
+  }
+  throw ServerFailure('Unknown error: $e');
+}
+```
+</CodeGroup>
+
+## Best Practices
+
+<ParamField path="Unique filenames" type="recommendation">
+  Use timestamps or UUIDs in filenames to prevent collisions in storage.
+</ParamField>
+
+<ParamField path="Progress indicators" type="recommendation">
+  Show upload progress using StreamedResponse for large files.
+</ParamField>
+
+<ParamField path="Retry logic" type="recommendation">
+  Implement exponential backoff for failed uploads due to network issues.
+</ParamField>
+
+<ParamField path="Cleanup on failure" type="recommendation">
+  If database insert fails, delete the uploaded file from storage to avoid orphaned files.
+</ParamField>
+
+<ParamField path="Status polling" type="recommendation">
+  For AI processing, implement polling or real-time subscriptions to update status when ready.
+</ParamField>

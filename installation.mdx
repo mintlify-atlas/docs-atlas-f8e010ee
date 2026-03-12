@@ -1,0 +1,816 @@
+---
+title: 'Installation'
+description: 'Install StudyQuest on iOS, Android, Web, and Desktop platforms'
+icon: 'download'
+---
+
+StudyQuest is built with Flutter, enabling it to run on multiple platforms from a single codebase. Follow the installation guide for your target platform.
+
+## Prerequisites
+
+Before installing StudyQuest, ensure you have:
+
+<CardGroup cols={2}>
+  <Card title="Flutter SDK" icon="flutter">
+    Flutter 3.10.7 or higher
+  </Card>
+  <Card title="Development Tools" icon="code">
+    Platform-specific SDKs and tools
+  </Card>
+  <Card title="Git" icon="git">
+    For cloning the repository
+  </Card>
+  <Card title="Supabase Account" icon="database">
+    Backend services and authentication
+  </Card>
+</CardGroup>
+
+### System Requirements
+
+```yaml
+# From pubspec.yaml:21-22
+environment:
+  sdk: ^3.10.7
+```
+
+<Tabs>
+  <Tab title="macOS">
+    - macOS 10.15 (Catalina) or higher
+    - Xcode 14.0+ (for iOS/macOS development)
+    - CocoaPods 1.11.0+
+  </Tab>
+  <Tab title="Windows">
+    - Windows 10 or higher (64-bit)
+    - Visual Studio 2022 with C++ tools
+    - Git for Windows
+  </Tab>
+  <Tab title="Linux">
+    - Ubuntu 20.04+ or equivalent
+    - Clang, CMake, GTK development libraries
+    - Ninja build system
+  </Tab>
+</Tabs>
+
+## Install Flutter
+
+<Steps>
+  <Step title="Download Flutter SDK">
+    Visit [flutter.dev](https://flutter.dev/docs/get-started/install) and download the appropriate SDK for your operating system.
+
+    ```bash
+    # Verify Flutter installation
+    flutter --version
+    
+    # Expected output:
+    # Flutter 3.10.7 • channel stable
+    # Dart 3.10.7 • DevTools 2.x.x
+    ```
+  </Step>
+
+  <Step title="Run Flutter Doctor">
+    Check your development environment setup:
+
+    ```bash
+    flutter doctor
+    ```
+
+    Address any issues indicated by ❌ or ⚠️ symbols.
+
+    <Note>
+      You only need to install tooling for platforms you plan to target. For example, iOS development requires macOS and Xcode.
+    </Note>
+  </Step>
+</Steps>
+
+## Clone the Repository
+
+```bash
+git clone https://github.com/your-org/study-quest.git
+cd study-quest
+```
+
+## Configure Supabase Backend
+
+StudyQuest uses Supabase for authentication, database, and storage.
+
+<Steps>
+  <Step title="Create Supabase Project">
+    1. Sign up at [supabase.com](https://supabase.com)
+    2. Create a new project
+    3. Note your project URL and anon key
+  </Step>
+
+  <Step title="Create Secrets File">
+    Create `lib/core/secrets.dart` with your Supabase credentials:
+
+    ```dart
+    // lib/core/secrets.dart
+    class Secrets {
+      static const String supabaseUrl = 'https://your-project.supabase.co';
+      static const String supabaseAnonKey = 'your-anon-key-here';
+    }
+    ```
+
+    <Warning>
+      Never commit `secrets.dart` to version control. Add it to `.gitignore`.
+    </Warning>
+  </Step>
+
+  <Step title="Initialize Supabase">
+    The app initializes Supabase on startup:
+
+    ```dart
+    // From main.dart:11-19
+    Future<void> main() async {
+      WidgetsFlutterBinding.ensureInitialized();
+
+      await NotificationService.init();
+      
+      await Supabase.initialize(
+        url: Secrets.supabaseUrl,
+        anonKey: Secrets.supabaseAnonKey,
+      );
+
+      await di.init();
+      runApp(const MyApp());
+    }
+    ```
+  </Step>
+</Steps>
+
+## Platform-Specific Setup
+
+<Tabs>
+  <Tab title="iOS">
+    ### iOS Installation
+
+    <Steps>
+      <Step title="Install Xcode">
+        Download Xcode from the Mac App Store (14.0 or higher).
+
+        ```bash
+        # Verify Xcode installation
+        xcodebuild -version
+        ```
+      </Step>
+
+      <Step title="Install CocoaPods">
+        ```bash
+        sudo gem install cocoapods
+        pod --version
+        ```
+      </Step>
+
+      <Step title="Configure iOS Permissions">
+        The app requires notification permissions in `ios/Runner/Info.plist`:
+
+        ```xml
+        <key>UIBackgroundModes</key>
+        <array>
+            <string>remote-notification</string>
+        </array>
+        ```
+      </Step>
+
+      <Step title="Install Dependencies">
+        ```bash
+        flutter pub get
+        cd ios
+        pod install
+        cd ..
+        ```
+      </Step>
+
+      <Step title="Run on iOS">
+        ```bash
+        # List available iOS simulators
+        flutter devices
+        
+        # Run on simulator
+        flutter run -d ios
+        
+        # Run on physical device
+        flutter run -d <device-id>
+        ```
+
+        <Note>
+          To run on a physical iOS device, you'll need an Apple Developer account and proper code signing setup in Xcode.
+        </Note>
+      </Step>
+    </Steps>
+
+    ### iOS Build Configuration
+
+    ```swift
+    // From ios/Runner/AppDelegate.swift
+    import UIKit
+    import Flutter
+
+    @UIApplicationMain
+    @objc class AppDelegate: FlutterAppDelegate {
+      override func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+      ) -> Bool {
+        GeneratedPluginRegistrant.register(with: self)
+        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Android">
+    ### Android Installation
+
+    <Steps>
+      <Step title="Install Android Studio">
+        Download Android Studio from [developer.android.com](https://developer.android.com/studio).
+
+        Install required components:
+        - Android SDK Platform (API 21+)
+        - Android SDK Build-Tools
+        - Android SDK Platform-Tools
+        - Android SDK Command-line Tools
+      </Step>
+
+      <Step title="Configure Android Build">
+        The app is configured with Kotlin and requires Java 17:
+
+        ```kotlin
+        // From android/app/build.gradle.kts:8-24
+        android {
+            namespace = "com.example.study_quest"
+            
+            compileSdk = flutter.compileSdkVersion
+            ndkVersion = flutter.ndkVersion
+
+            compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+                isCoreLibraryDesugaringEnabled = true 
+            }
+
+            kotlinOptions {
+                jvmTarget = JavaVersion.VERSION_17.toString()
+            }
+        }
+        ```
+
+        <Note>
+          Core library desugaring is enabled to support modern date/time APIs on older Android versions for the notification system.
+        </Note>
+      </Step>
+
+      <Step title="Set Application ID">
+        Update the package name in `android/app/build.gradle.kts`:
+
+        ```kotlin
+        // android/app/build.gradle.kts:26-28
+        defaultConfig {
+            applicationId = "com.example.study_quest" // Change this
+            minSdk = flutter.minSdkVersion
+            targetSdk = flutter.targetSdkVersion
+            versionCode = flutter.versionCode
+            versionName = flutter.versionName
+        }
+        ```
+      </Step>
+
+      <Step title="Configure Permissions">
+        Add required permissions in `android/app/src/main/AndroidManifest.xml`:
+
+        ```xml
+        <uses-permission android:name="android.permission.INTERNET" />
+        <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+        <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+        <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+        ```
+      </Step>
+
+      <Step title="Install Dependencies">
+        ```bash
+        flutter pub get
+        ```
+      </Step>
+
+      <Step title="Run on Android">
+        ```bash
+        # List available Android devices
+        flutter devices
+        
+        # Run on emulator or device
+        flutter run -d android
+        
+        # Build release APK
+        flutter build apk --release
+        
+        # Build app bundle for Play Store
+        flutter build appbundle --release
+        ```
+
+        <Note>
+          The APK will be generated at `build/app/outputs/flutter-apk/app-release.apk`
+        </Note>
+      </Step>
+    </Steps>
+
+    ### Android MainActivity
+
+    ```kotlin
+    // From android/app/src/main/kotlin/com/example/study_quest/MainActivity.kt
+    package com.example.study_quest
+
+    import io.flutter.embedding.android.FlutterActivity
+
+    class MainActivity: FlutterActivity() {
+    }
+    ```
+  </Tab>
+
+  <Tab title="Web">
+    ### Web Installation
+
+    <Steps>
+      <Step title="Enable Web Support">
+        Flutter web support is included by default in Flutter 3.10.7+.
+
+        ```bash
+        # Verify web support
+        flutter devices
+        # Should show: Chrome • chrome • web-javascript
+        ```
+      </Step>
+
+      <Step title="Configure Web Assets">
+        The web directory contains:
+
+        ```
+        web/
+        ├── favicon.png          # Browser tab icon
+        ├── icons/               # PWA icons
+        ├── index.html           # Entry point
+        └── manifest.json        # PWA manifest
+        ```
+      </Step>
+
+      <Step title="Update Web Manifest">
+        Edit `web/manifest.json` for your deployment:
+
+        ```json
+        {
+          "name": "StudyQuest",
+          "short_name": "StudyQuest",
+          "start_url": ".",
+          "display": "standalone",
+          "background_color": "#FFFFFF",
+          "theme_color": "#2D5F7F",
+          "description": "AI-powered study companion",
+          "orientation": "portrait-primary",
+          "icons": []
+        }
+        ```
+      </Step>
+
+      <Step title="Run Web App">
+        ```bash
+        # Run in debug mode
+        flutter run -d chrome
+        
+        # Run on specific port
+        flutter run -d chrome --web-port=8080
+        
+        # Build for production
+        flutter build web --release
+        ```
+
+        The production build is generated in `build/web/`.
+      </Step>
+
+      <Step title="Deploy to Web">
+        Deploy the `build/web` directory to any static hosting service:
+
+        <CodeGroup>
+        ```bash Firebase Hosting
+        firebase init hosting
+        firebase deploy --only hosting
+        ```
+
+        ```bash Netlify
+        netlify deploy --prod --dir=build/web
+        ```
+
+        ```bash Vercel
+        vercel --prod build/web
+        ```
+        </CodeGroup>
+      </Step>
+    </Steps>
+
+    <Warning>
+      File picker functionality has limitations on web. The app checks for null paths:
+      ```dart
+      // From home_page.dart:55-57
+      if (result != null && result.files.single.path == null) {
+        print("Error: El path del archivo es nulo (¿Estás en Web?)");
+      }
+      ```
+    </Warning>
+  </Tab>
+
+  <Tab title="Desktop">
+    ### Desktop Installation
+
+    StudyQuest supports Windows, macOS, and Linux desktop platforms.
+
+    <Tabs>
+      <Tab title="Windows">
+        <Steps>
+          <Step title="Install Visual Studio">
+            Download Visual Studio 2022 with:
+            - Desktop development with C++
+            - Windows 10 SDK
+          </Step>
+
+          <Step title="Enable Windows Support">
+            ```bash
+            flutter config --enable-windows-desktop
+            flutter doctor
+            ```
+          </Step>
+
+          <Step title="Run Windows App">
+            ```bash
+            flutter run -d windows
+            
+            # Build release executable
+            flutter build windows --release
+            ```
+
+            The executable is generated at `build/windows/runner/Release/study_quest.exe`.
+          </Step>
+        </Steps>
+
+        ### Windows Configuration
+
+        ```cmake
+        # windows/CMakeLists.txt configures the build
+        ```
+      </Tab>
+
+      <Tab title="macOS">
+        <Steps>
+          <Step title="Enable macOS Support">
+            ```bash
+            flutter config --enable-macos-desktop
+            flutter doctor
+            ```
+          </Step>
+
+          <Step title="Configure Entitlements">
+            macOS apps require entitlements for network and file access:
+
+            ```xml
+            <!-- macos/Runner/DebugProfile.entitlements -->
+            <key>com.apple.security.network.client</key>
+            <true/>
+            <key>com.apple.security.files.user-selected.read-only</key>
+            <true/>
+            ```
+          </Step>
+
+          <Step title="Run macOS App">
+            ```bash
+            flutter run -d macos
+            
+            # Build release app
+            flutter build macos --release
+            ```
+
+            The app bundle is at `build/macos/Build/Products/Release/study_quest.app`.
+          </Step>
+        </Steps>
+
+        ### macOS AppDelegate
+
+        ```swift
+        // From macos/Runner/AppDelegate.swift
+        import Cocoa
+        import FlutterMacOS
+
+        @NSApplicationMain
+        class AppDelegate: FlutterAppDelegate {
+          override func applicationShouldTerminateAfterLastWindowClosed(
+            _ sender: NSApplication
+          ) -> Bool {
+            return true
+          }
+        }
+        ```
+      </Tab>
+
+      <Tab title="Linux">
+        <Steps>
+          <Step title="Install Dependencies">
+            ```bash
+            # Ubuntu/Debian
+            sudo apt-get update
+            sudo apt-get install clang cmake ninja-build pkg-config \
+              libgtk-3-dev liblzma-dev libstdc++-12-dev
+            ```
+          </Step>
+
+          <Step title="Enable Linux Support">
+            ```bash
+            flutter config --enable-linux-desktop
+            flutter doctor
+            ```
+          </Step>
+
+          <Step title="Run Linux App">
+            ```bash
+            flutter run -d linux
+            
+            # Build release binary
+            flutter build linux --release
+            ```
+
+            The binary is at `build/linux/x64/release/bundle/study_quest`.
+          </Step>
+        </Steps>
+
+        ### Linux Configuration
+
+        ```cmake
+        # linux/CMakeLists.txt configures GTK3 and dependencies
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+## Install Dependencies
+
+After platform-specific setup, install all Flutter packages:
+
+```bash
+flutter pub get
+```
+
+### Key Dependencies
+
+```yaml
+# From pubspec.yaml:30-61
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  
+  # Animations & UI
+  rive: ^0.13.1                         # Interactive animations
+  confetti: ^0.7.0                      # Celebration effects
+  
+  # Audio & Speech
+  flutter_tts: ^4.2.5                   # Text-to-speech for flashcards
+  audioplayers: ^6.6.0                  # Sound effects for quizzes
+  
+  # Notifications
+  flutter_local_notifications: ^17.1.2  # Streak reminders
+  timezone: ^0.9.0                      # Notification scheduling
+  
+  # State Management
+  flutter_bloc: ^8.1.3                  # BLoC pattern
+  equatable: ^2.0.5                     # Object comparison
+  
+  # Dependency Injection
+  get_it: ^7.6.0                        # Service locator
+  
+  # Backend & Data
+  supabase_flutter: ^2.8.3              # Backend services
+  http: ^1.2.1                          # HTTP client
+  
+  # Utilities
+  dartz: ^0.10.1                        # Functional programming
+  file_picker: ^8.0.0                   # PDF selection
+```
+
+<Note>
+  All dependencies are automatically downloaded when you run `flutter pub get`.
+</Note>
+
+## Verify Installation
+
+Run these commands to verify your setup:
+
+<Steps>
+  <Step title="Check Flutter Configuration">
+    ```bash
+    flutter doctor -v
+    ```
+    
+    Ensure all required components show ✓.
+  </Step>
+
+  <Step title="Test Build">
+    ```bash
+    flutter build <platform> --debug
+    # Replace <platform> with: ios, apk, web, windows, macos, or linux
+    ```
+  </Step>
+
+  <Step title="Run the App">
+    ```bash
+    flutter run -d <device-id>
+    ```
+    
+    You should see the StudyQuest welcome page with "Bienvenido a StudyQuest".
+  </Step>
+</Steps>
+
+## Development Tools
+
+### Hot Reload
+
+During development, use hot reload to see changes instantly:
+
+```bash
+# In the terminal where 'flutter run' is active:
+# Press 'r' for hot reload
+# Press 'R' for hot restart
+# Press 'q' to quit
+```
+
+### Debug Mode
+
+```dart
+// From main.dart:38
+MaterialApp(
+  title: 'StudyQuest',
+  debugShowCheckedModeBanner: false, // Removes debug banner
+  theme: AppTheme.lightTheme,
+  home: const WelcomePage(),
+)
+```
+
+### VS Code Extensions
+
+Recommended extensions for development:
+- Flutter
+- Dart
+- Flutter Widget Snippets
+- Pubspec Assist
+
+### Android Studio Plugins
+
+Recommended plugins:
+- Flutter
+- Dart
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Flutter doctor shows issues">
+    Address each issue individually:
+    
+    ```bash
+    # Android licenses not accepted
+    flutter doctor --android-licenses
+    
+    # Xcode not configured
+    sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+    sudo xcodebuild -runFirstLaunch
+    
+    # CocoaPods not installed
+    sudo gem install cocoapods
+    ```
+  </Accordion>
+
+  <Accordion title="Build fails with dependency errors">
+    Clear Flutter cache and reinstall dependencies:
+    
+    ```bash
+    flutter clean
+    flutter pub get
+    
+    # For iOS
+    cd ios && pod deintegrate && pod install && cd ..
+    
+    # For Android
+    cd android && ./gradlew clean && cd ..
+    ```
+  </Accordion>
+
+  <Accordion title="Supabase connection fails">
+    Verify your `lib/core/secrets.dart` configuration:
+    
+    ```dart
+    class Secrets {
+      static const String supabaseUrl = 'https://xxx.supabase.co'; // Check URL
+      static const String supabaseAnonKey = 'your-key';             // Check key
+    }
+    ```
+    
+    Test the connection in Supabase dashboard.
+  </Accordion>
+
+  <Accordion title="App crashes on startup">
+    Check these common issues:
+    
+    1. **Missing secrets file**: Create `lib/core/secrets.dart`
+    2. **Invalid Supabase credentials**: Verify URL and key
+    3. **Permission issues**: Check platform-specific permissions
+    4. **Outdated dependencies**: Run `flutter pub upgrade`
+    
+    View logs:
+    ```bash
+    flutter logs
+    ```
+  </Accordion>
+
+  <Accordion title="File picker doesn't work on web">
+    This is a known Flutter web limitation. The app handles this:
+    
+    ```dart
+    // From home_page.dart:54-58
+    } else {
+      if (result != null && result.files.single.path == null) {
+         print("Error: El path del archivo es nulo (¿Estás en Web?)");
+      }
+    }
+    ```
+    
+    Use mobile or desktop platforms for full file picker support.
+  </Accordion>
+</AccordionGroup>
+
+## Building for Production
+
+<CodeGroup>
+```bash iOS
+# Create release build
+flutter build ios --release
+
+# Archive in Xcode for App Store submission
+open ios/Runner.xcworkspace
+# Product > Archive
+```
+
+```bash Android
+# Build release APK
+flutter build apk --release --split-per-abi
+
+# Build App Bundle for Play Store
+flutter build appbundle --release
+```
+
+```bash Web
+# Build optimized web app
+flutter build web --release --web-renderer html
+
+# Or use CanvasKit for better graphics
+flutter build web --release --web-renderer canvaskit
+```
+
+```bash Desktop
+# Windows
+flutter build windows --release
+
+# macOS
+flutter build macos --release
+
+# Linux
+flutter build linux --release
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Create your first study world
+  </Card>
+  <Card title="Architecture Overview" icon="diagram-project" href="/architecture/overview">
+    Understand the clean architecture
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/overview">
+    Explore the codebase structure
+  </Card>
+  <Card title="Development Setup" icon="users" href="/dev/environment-setup">
+    Join the development team
+  </Card>
+</CardGroup>
+
+## Version Information
+
+```yaml
+# From pubspec.yaml:19
+version: 1.0.0+1
+```
+
+- **Version**: 1.0.0
+- **Build Number**: 1
+- **Flutter SDK**: ^3.10.7
+- **Dart SDK**: ^3.10.7
+
+<Note>
+  This installation guide is based on the current codebase structure. For the latest updates, check the repository's README.md.
+</Note>

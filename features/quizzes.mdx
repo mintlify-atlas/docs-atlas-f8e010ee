@@ -1,0 +1,598 @@
+---
+title: 'Quiz System'
+description: 'Interactive multiple-choice quizzes with lives system, audio feedback, and reactive avatars'
+icon: 'circle-question'
+---
+
+## Overview
+
+StudyQuest's quiz system transforms learning into an engaging game-like experience. Students answer multiple-choice questions with **3 lives**, receive immediate feedback with sound effects, and see their progress through an animated avatar companion.
+
+<Card title="Quiz Features" icon="sparkles">
+  - **Lives System**: 3 hearts - lose all and the level fails
+  - **Audio Feedback**: Success and failure sound effects
+  - **Reactive Avatar**: Visual companion that celebrates or sympathizes
+  - **Detailed Explanations**: Learn from mistakes with AI-generated explanations
+  - **XP Rewards**: Earn +20 XP for completing quizzes
+</Card>
+
+## Game Mechanics
+
+### Lives System
+
+Quizzes use a 3-heart system inspired by mobile games:
+
+```dart quiz_page.dart
+class _QuizPageState extends State<QuizPage> {
+  // Lives system
+  int _lives = 3;
+  
+  // Question state
+  int _currentIndex = 0;
+  int? _selectedOptionIndex;
+  bool _isAnswered = false;
+  bool _isCorrect = false;
+}
+```
+
+### Hearts Display
+
+Lives are shown as hearts in the app bar:
+
+```dart quiz_page.dart
+appBar: AppBar(
+  title: const Text("Prueba Rápida", style: TextStyle(fontSize: 18)),
+  centerTitle: true,
+  actions: [
+    Row(
+      children: List.generate(3, (index) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2.0),
+          child: Icon(
+            index < _lives ? Icons.favorite : Icons.favorite_border,
+            color: Colors.redAccent,
+            size: 26,
+          ),
+        );
+      }),
+    ),
+    const SizedBox(width: 16),
+  ],
+)
+```
+
+## Answer Checking Logic
+
+### Validation Flow
+
+<Steps>
+  <Step title="User Selects Option">
+    Taps one of the four multiple-choice options
+  </Step>
+  
+  <Step title="Answer Validation">
+    System compares selected index with correct answer index
+  </Step>
+  
+  <Step title="Audio Feedback">
+    Plays success.mp3 or wrong.mp3 based on correctness
+  </Step>
+  
+  <Step title="Avatar Reaction">
+    Shows animated avatar celebrating or sympathizing
+  </Step>
+  
+  <Step title="Lives Deduction">
+    If wrong, remove one heart. If no hearts left, trigger game over
+  </Step>
+  
+  <Step title="Explanation Display">
+    Show AI-generated explanation regardless of correctness
+  </Step>
+</Steps>
+
+### Implementation
+
+```dart quiz_page.dart
+void _checkAnswer(int selectedIndex) {
+  if (_isAnswered) return;
+
+  final currentQ = _questions[_currentIndex];
+  final isCorrectNow = (selectedIndex == currentQ.correctIndex);
+
+  setState(() {
+    _selectedOptionIndex = selectedIndex;
+    _isAnswered = true;
+    _isCorrect = isCorrectNow;
+    
+    _currentReaction = isCorrectNow 
+        ? AvatarReaction.success 
+        : AvatarReaction.fail;
+    _showAvatarPopUp = true;
+  });
+
+  // Play sound effect
+  _playSound(isCorrectNow);
+
+  // Lives logic
+  if (!isCorrectNow) {
+    setState(() {
+      _lives--;
+    });
+    
+    if (_lives <= 0) {
+      _showGameOverDialog();
+      return;  // Stop here - user lost
+    }
+  }
+
+  // Hide avatar after 1.5 seconds
+  Future.delayed(const Duration(milliseconds: 1500), () {
+    if (mounted && _lives > 0) {
+      setState(() {
+        _showAvatarPopUp = false;
+        _currentReaction = AvatarReaction.idle;
+      });
+    }
+  });
+}
+```
+
+## Audio System
+
+Quizzes use the `audioplayers` package for sound effects:
+
+### Audio Player Setup
+
+```dart quiz_page.dart
+import 'package:audioplayers/audioplayers.dart';
+
+class _QuizPageState extends State<QuizPage> {
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  
+  // Play sound based on correctness
+  Future<void> _playSound(bool isCorrect) async {
+    try {
+      if (isCorrect) {
+        await _audioPlayer.play(AssetSource('sounds/correct.mp3'));
+      } else {
+        await _audioPlayer.play(AssetSource('sounds/wrong.mp3'));
+      }
+    } catch (e) {
+      print("Error reproduciendo audio: $e");
+    }
+  }
+  
+  @override
+  void dispose() {
+    _flutterTts.stop();
+    _audioPlayer.dispose();  // Clean up audio from memory
+    _confettiController.dispose();
+    super.dispose();
+  }
+}
+```
+
+<Note>
+Audio files should be placed in `assets/sounds/` and declared in `pubspec.yaml`
+</Note>
+
+## Reactive Avatar
+
+The avatar provides emotional feedback:
+
+### Avatar States
+
+```dart quiz_page.dart
+enum AvatarReaction { idle, success, fail, celebrate }
+
+AvatarReaction _currentReaction = AvatarReaction.idle;
+bool _showAvatarPopUp = false;
+```
+
+### Avatar Display Logic
+
+```dart quiz_page.dart
+IgnorePointer(
+  ignoring: !_showAvatarPopUp,
+  child: Container(
+    alignment: Alignment.center,
+    margin: const EdgeInsets.only(bottom: 100),
+    child: AnimatedOpacity(
+      opacity: _showAvatarPopUp ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 200),
+      child: AnimatedScale(
+        scale: _showAvatarPopUp ? 1.0 : 0.1,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.elasticOut,  // Bouncy animation
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.95),
+            shape: BoxShape.circle,
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black26, 
+                blurRadius: 20, 
+                spreadRadius: 5
+              )
+            ],
+          ),
+          padding: const EdgeInsets.all(16),
+          child: ReactiveAvatar(
+            reaction: _currentReaction,
+            size: 150,
+          ),
+        ),
+      ),
+    ),
+  ),
+)
+```
+
+## Game Over State
+
+When lives reach zero:
+
+```dart quiz_page.dart
+void _showGameOverDialog() {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text(
+        "¡Te quedaste sin vidas! 💔", 
+        textAlign: TextAlign.center
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const ReactiveAvatar(reaction: AvatarReaction.fail, size: 120),
+          const SizedBox(height: 16),
+          const Text(
+            "No te desanimes. Repasa los apuntes y vuelve a intentarlo.",
+            textAlign: TextAlign.center
+          ),
+        ],
+      ),
+      actions: [
+        Center(
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)
+              ),
+            ),
+            onPressed: () {
+              _flutterTts.stop();
+              Navigator.pop(context);  // Close popup
+              Navigator.pop(context);  // Return to map
+            },
+            child: const Text("Terminar Intento"),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+## Success & Rewards
+
+Completing all questions successfully:
+
+```dart quiz_page.dart
+void _showCompletionDialog() async {
+  di.sl<AuthRepository>().addXp(20);  // Award 20 XP (double flashcards)
+  await di.sl<LevelRepository>().markLevelCompleted(widget.topicId);
+  _confettiController.play();  // Celebratory confetti
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text(
+        "¡Examen Completado! 🎓", 
+        textAlign: TextAlign.center
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const ReactiveAvatar(
+            reaction: AvatarReaction.celebrate,
+            size: 120
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            "Has demostrado tu conocimiento.", 
+            textAlign: TextAlign.center
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.orange),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.bolt, color: Colors.orange),
+                SizedBox(width: 8),
+                Text(
+                  "+20 XP", 
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold, 
+                    fontSize: 18, 
+                    color: Colors.orange
+                  )
+                ),
+              ],
+            ),
+          )
+        ],
+      ),
+      actions: [
+        Center(
+          child: ElevatedButton(
+            onPressed: () {
+              _flutterTts.stop();
+              Navigator.pop(context);
+              Navigator.pop(context);
+            },
+            child: const Text("Reclamar Recompensa"),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+<Accordion title="Why +20 XP for quizzes vs +10 for flashcards?">
+Quizzes require more cognitive effort (recall vs recognition) and have higher stakes (lives system). The 2x XP reward reflects this increased difficulty and motivates students to attempt harder content.
+</Accordion>
+
+## Text-to-Speech for Questions
+
+Each question can be read aloud:
+
+```dart quiz_page.dart
+Container(
+  padding: const EdgeInsets.all(16),
+  decoration: BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: Colors.grey[200]!, width: 2),
+  ),
+  child: Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      IconButton(
+        onPressed: () => _speak(currentQ.question),
+        icon: const Icon(
+          Icons.volume_up_rounded, 
+          size: 32, 
+          color: AppTheme.teal
+        ),
+        tooltip: "Escuchar pregunta",
+      ),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Text(
+          currentQ.question,
+          style: const TextStyle(
+            fontSize: 20, 
+            fontWeight: FontWeight.bold
+          ),
+        ),
+      ),
+    ],
+  ),
+)
+```
+
+## Option Display
+
+Options change color based on correctness:
+
+```dart quiz_page.dart
+Widget _buildOptionCard(int index, String text, int correctIndex) {
+  Color backgroundColor = Colors.white;
+  Color borderColor = Colors.grey[300]!;
+  
+  if (_isAnswered) {
+    if (index == correctIndex) {
+      backgroundColor = Colors.green[100]!;
+      borderColor = Colors.green;
+    } else if (index == _selectedOptionIndex && index != correctIndex) {
+      backgroundColor = Colors.red[100]!;
+      borderColor = Colors.red;
+    }
+  }
+
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 12.0),
+    child: InkWell(
+      onTap: _isAnswered ? null : () => _checkAnswer(index),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          border: Border.all(color: borderColor, width: 2),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 12,
+              backgroundColor: borderColor,
+              child: Text(
+                String.fromCharCode(65 + index),  // A, B, C, D
+                style: TextStyle(
+                  fontSize: 12, 
+                  color: _isAnswered ? Colors.white : Colors.grey[600]
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(text, style: const TextStyle(fontSize: 16)),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+```
+
+## Explanation Feedback
+
+After answering, students see the explanation:
+
+```dart quiz_page.dart
+if (_isAnswered && _lives > 0)
+  Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: _isCorrect ? Colors.green[50] : Colors.red[50],
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: _isCorrect ? Colors.green : Colors.red
+      ),
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Icon(
+              _isCorrect ? Icons.check_circle : Icons.error,
+              color: _isCorrect ? Colors.green : Colors.red
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _isCorrect ? "¡Correcto!" : "Incorrecto",
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: _isCorrect ? Colors.green[800] : Colors.red[800],
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (currentQ.explanation.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Container(
+            constraints: const BoxConstraints(maxHeight: 120),
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Text(
+                currentQ.explanation,
+                style: TextStyle(color: Colors.grey[800]),
+              ),
+            ),
+          ),
+        ],
+      ],
+    ),
+  )
+```
+
+## Quiz Data Entity
+
+```dart quiz_entity.dart
+class QuizEntity {
+  final String id;
+  final String question;
+  final List<String> options;
+  final int correctIndex;
+  final String explanation;
+
+  QuizEntity({
+    required this.id,
+    required this.question,
+    required this.options,
+    required this.correctIndex,
+    required this.explanation,
+  });
+
+  factory QuizEntity.fromMap(Map<String, dynamic> map) {
+    return QuizEntity(
+      id: map['id'] as String,
+      question: map['question_text'] ?? 'Sin pregunta',
+      options: List<String>.from(map['options'] ?? []),
+      correctIndex: map['correct_answer_index'] as int,
+      explanation: map['explanation'] ?? '',
+    );
+  }
+}
+```
+
+## Progress Tracking
+
+```dart quiz_page.dart
+final currentQ = _questions[_currentIndex];
+final progress = (_currentIndex + 1) / _questions.length;
+
+// Display in AppBar
+bottom: PreferredSize(
+  preferredSize: const Size.fromHeight(6),
+  child: LinearProgressIndicator(
+    value: progress, 
+    color: AppTheme.teal
+  ),
+)
+```
+
+## Confetti Celebration
+
+Uses the `confetti` package for visual celebration:
+
+```dart quiz_page.dart
+late ConfettiController _confettiController;
+
+@override
+void initState() {
+  super.initState();
+  _confettiController = ConfettiController(
+    duration: const Duration(seconds: 3)
+  );
+}
+
+// In widget tree
+ConfettiWidget(
+  confettiController: _confettiController,
+  blastDirectionality: BlastDirectionality.explosive,
+  emissionFrequency: 0.05,
+  numberOfParticles: 20,
+  gravity: 0.1,
+)
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Lives Management" icon="heart">
+    Always check `_lives > 0` before allowing progression to prevent edge cases
+  </Card>
+  
+  <Card title="Audio Cleanup" icon="broom">
+    Dispose audio players and TTS in `dispose()` to prevent memory leaks
+  </Card>
+  
+  <Card title="Mounted Check" icon="shield">
+    Always verify `mounted` before setState after async operations
+  </Card>
+  
+  <Card title="Disable Tap After Answer" icon="hand">
+    Prevent multiple answers by checking `_isAnswered` in tap handler
+  </Card>
+</CardGroup>

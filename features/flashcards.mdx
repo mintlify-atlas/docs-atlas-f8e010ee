@@ -1,0 +1,429 @@
+---
+title: 'Flashcards System'
+description: 'Interactive flashcard review with spaced repetition and text-to-speech'
+icon: 'cards-blank'
+---
+
+## Overview
+
+StudyQuest's flashcard system implements a **spaced repetition algorithm** inspired by Anki, helping students efficiently memorize key concepts. Cards adapt based on user performance, ensuring struggling concepts are reviewed more frequently.
+
+<Card title="Key Features" icon="star">
+  - Spaced repetition algorithm for optimal learning
+  - 3D flip animations with perspective
+  - Text-to-speech for audio learning
+  - Real-time progress tracking
+  - Immediate XP rewards
+</Card>
+
+## User Experience
+
+### Page Flow
+
+<Steps>
+  <Step title="Load Cards">
+    System fetches all flashcards for the selected topic from Supabase
+  </Step>
+  
+  <Step title="Review Front">
+    User sees the question/concept and taps to flip the card
+  </Step>
+  
+  <Step title="Reveal Answer">
+    Card flips with 3D animation and reads answer using text-to-speech
+  </Step>
+  
+  <Step title="Self-Assessment">
+    User chooses "Lo sé" (I know it) or "Repasar" (Review again)
+  </Step>
+  
+  <Step title="Adaptive Repetition">
+    - "Lo sé": Card is removed from deck (mastered)
+    - "Repasar": Card moves to end of queue for later review
+  </Step>
+  
+  <Step title="Completion">
+    When all cards are mastered, user earns +10 XP and level is marked complete
+  </Step>
+</Steps>
+
+## Implementation
+
+### Data Structure
+
+Flashcards use a Queue-based system for spaced repetition:
+
+```dart flashcards_page.dart
+import 'dart:collection';
+
+class _FlashcardsPageState extends State<FlashcardsPage> {
+  // Queue structure for Anki-style spaced repetition
+  final Queue<FlashcardEntity> _cardsQueue = Queue();
+  int _totalInitialCards = 0;
+  
+  bool _isLoading = true;
+  bool _showBack = false;
+}
+```
+
+<Accordion title="Why use a Queue instead of List?">
+Queues allow efficient O(1) operations for both removing cards from the front (when mastered) and adding cards to the back (when needs review). This makes the spaced repetition algorithm performant even with large decks.
+</Accordion>
+
+### Loading Cards
+
+```dart flashcards_page.dart
+Future<void> _loadCards() async {
+  try {
+    final cards = await di.sl<LevelRepository>().getFlashcards(
+      widget.documentId, 
+      widget.topicId
+    );
+    setState(() {
+      _cardsQueue.addAll(cards);
+      _totalInitialCards = cards.length;
+      _isLoading = false;
+    });
+  } catch (e) {
+    print("Error cargando flashcards: $e");
+    setState(() => _isLoading = false);
+  }
+}
+```
+
+### 3D Flip Animation
+
+The card flip uses a perspective transform for realistic 3D rotation:
+
+```dart flashcards_page.dart
+void initState() {
+  super.initState();
+  _initTts();
+  _loadCards();
+  
+  _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 600),
+  );
+  _animation = Tween<double>(begin: 0, end: pi).animate(
+    CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+  );
+}
+
+void _flipCard() {
+  if (_controller.isAnimating) return;
+  
+  setState(() {
+    _showBack = !_showBack;
+  });
+  
+  if (_showBack) {
+    _controller.forward();
+    _speak(_cardsQueue.first.back);  // Auto-read answer
+  } else {
+    _controller.reverse();
+    _flutterTts.stop();
+  }
+}
+```
+
+### 3D Transform Logic
+
+The key to preventing mirrored text during rotation:
+
+```dart flashcards_page.dart
+AnimatedBuilder(
+  animation: _animation,
+  builder: (context, child) {
+    final angle = _animation.value;
+    // Detect if card passed halfway point (90 degrees)
+    final isFront = angle < (pi / 2);
+
+    // Cancel mirror effect by rotating back -pi when showing back
+    final transform = Matrix4.identity()
+      ..setEntry(3, 2, 0.001)  // 3D perspective
+      ..rotateY(isFront ? angle : angle - pi);
+
+    return Transform(
+      alignment: Alignment.center,
+      transform: transform,
+      child: _buildCardFace(
+        text: isFront ? _cardsQueue.first.front : _cardsQueue.first.back,
+        isFront: isFront,
+        color: isFront ? Colors.white : Colors.indigo[50]!,
+      ),
+    );
+  },
+)
+```
+
+## Spaced Repetition Algorithm
+
+The core learning algorithm adapts to user performance:
+
+### Marking as Learned
+
+```dart flashcards_page.dart
+void _markAsLearned() {
+  _flutterTts.stop();
+  // Mastered: Remove permanently from queue
+  _cardsQueue.removeFirst();
+  _moveToNextCard();
+}
+```
+
+### Marking for Review
+
+```dart flashcards_page.dart
+void _markForReview() {
+  _flutterTts.stop();
+  // Needs review: Move to END of queue for later practice
+  final currentCard = _cardsQueue.removeFirst();
+  _cardsQueue.addLast(currentCard);
+  _moveToNextCard();
+}
+```
+
+<Note>
+This implements a simplified Leitner system where difficult cards appear more frequently in the same session until mastered.
+</Note>
+
+### Progress Calculation
+
+```dart flashcards_page.dart
+// Calculate progress based on cards removed from queue
+final int cardsLeft = _cardsQueue.length;
+final int cardsLearned = _totalInitialCards - cardsLeft;
+final double progress = (_totalInitialCards > 0) 
+    ? (cardsLearned / _totalInitialCards).clamp(0.0, 1.0) 
+    : 0.0;
+```
+
+## Text-to-Speech Integration
+
+### TTS Configuration
+
+```dart flashcards_page.dart
+final FlutterTts _flutterTts = FlutterTts();
+
+Future<void> _initTts() async {
+  await _flutterTts.setLanguage("es-MX");  // Spanish (Mexico)
+  await _flutterTts.setSpeechRate(0.5);   // Slower for learning
+  await _flutterTts.setVolume(1.0);       // Full volume
+  await _flutterTts.setPitch(1.0);        // Natural pitch
+}
+
+Future<void> _speak(String text) async {
+  await _flutterTts.speak(text);
+}
+```
+
+<Accordion title="Why automatic speech on flip?">
+Research shows multi-sensory learning (visual + auditory) improves retention by up to 40%. Automatically reading the answer reinforces the concept through multiple channels.
+</Accordion>
+
+## Completion & Rewards
+
+When all cards are mastered:
+
+```dart flashcards_page.dart
+void _showCompletionDialog() async {
+  di.sl<AuthRepository>().addXp(10);  // Award 10 XP
+  await di.sl<LevelRepository>().markLevelCompleted(widget.topicId);
+
+  if (!mounted) return;
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => AlertDialog(
+      title: const Text("¡Nivel Completado! 🎉"),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("Has repasado todos los conceptos clave."),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.bolt, color: Colors.orange),
+              const SizedBox(width: 8),
+              const Text(
+                "+10 XP", 
+                style: TextStyle(
+                  fontWeight: FontWeight.bold, 
+                  fontSize: 18, 
+                  color: Colors.orange
+                )
+              ),
+            ],
+          )
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);  // Close dialog
+            Navigator.pop(context);  // Return to level map
+          },
+          child: const Text("Volver al Mapa"),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+## UI Components
+
+### Card Face Design
+
+```dart flashcards_page.dart
+Widget _buildCardFace({required String text, required bool isFront, required Color color}) {
+  return Container(
+    decoration: BoxDecoration(
+      color: color,
+      borderRadius: BorderRadius.circular(24),
+      boxShadow: const [
+        BoxShadow(
+          color: Colors.black12, 
+          blurRadius: 15, 
+          spreadRadius: 2, 
+          offset: Offset(0, 8)
+        ),
+      ],
+    ),
+    padding: const EdgeInsets.all(30),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (!isFront) ...[
+          Text(
+            "RESPUESTA",
+            style: TextStyle(
+              color: AppTheme.teal.withOpacity(0.7), 
+              letterSpacing: 1.5, 
+              fontSize: 12
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+        
+        Expanded(
+          child: Center(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Text(
+                text,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 20, 
+                  fontWeight: isFront ? FontWeight.bold : FontWeight.normal,
+                  color: Colors.black87,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ),
+        ),
+        
+        if (isFront) ...[
+          const SizedBox(height: 20),
+          Text(
+            "PREGUNTA",
+            style: TextStyle(
+              color: Colors.grey[400], 
+              letterSpacing: 1.5, 
+              fontSize: 12
+            ),
+          ),
+        ]
+      ],
+    ),
+  );
+}
+```
+
+### Action Buttons
+
+Buttons appear only when the back is shown:
+
+```dart flashcards_page.dart
+AnimatedOpacity(
+  opacity: _showBack ? 1.0 : 0.0,
+  duration: const Duration(milliseconds: 300),
+  child: IgnorePointer(
+    ignoring: !_showBack,
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _buildActionButton(
+          Icons.close, 
+          Colors.red[400]!, 
+          "Repasar", 
+          _markForReview
+        ),
+        _buildActionButton(
+          Icons.check, 
+          Colors.green[500]!, 
+          "Lo sé", 
+          _markAsLearned
+        ),
+      ],
+    ),
+  ),
+)
+```
+
+## Data Entity
+
+Flashcards are represented by a simple entity:
+
+```dart flashcard_entity.dart
+class FlashcardEntity {
+  final String id;
+  final String front;  // Question
+  final String back;   // Answer
+
+  FlashcardEntity({
+    required this.id,
+    required this.front,
+    required this.back,
+  });
+
+  factory FlashcardEntity.fromMap(Map<String, dynamic> map) {
+    return FlashcardEntity(
+      id: map['id'] as String,
+      front: map['front_text'] ?? 'Sin texto',
+      back: map['back_text'] ?? 'Sin respuesta',
+    );
+  }
+}
+```
+
+## Performance Optimizations
+
+<CardGroup cols={2}>
+  <Card title="Queue Operations" icon="gauge-high">
+    O(1) time complexity for add/remove operations ensures smooth performance with large decks
+  </Card>
+  
+  <Card title="Animation Control" icon="film">
+    Prevents multiple simultaneous flips with `_controller.isAnimating` check
+  </Card>
+  
+  <Card title="TTS Management" icon="volume">
+    Stops speech when navigating to prevent audio leaks
+  </Card>
+  
+  <Card title="Progress Clamping" icon="chart-line">
+    Progress values are clamped to 0.0-1.0 to prevent UI glitches
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+1. **Always stop TTS on dispose** - Prevents memory leaks and background audio
+2. **Check mounted state** - Before showing dialogs after async operations
+3. **Use Queue for FIFO** - More efficient than List for repetition algorithms
+4. **Clamp progress values** - Prevents negative or >100% progress indicators

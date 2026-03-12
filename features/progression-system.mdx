@@ -1,0 +1,549 @@
+---
+title: 'Progression System'
+description: 'Level maps, XP rewards, and gamified learning progression'
+icon: 'map-location-dot'
+---
+
+## Overview
+
+StudyQuest uses a **gamified progression system** inspired by language learning apps like Duolingo. Each uploaded document becomes a "world" with multiple levels that unlock sequentially as students progress.
+
+<Card title="Progression Features" icon="trophy">
+  - Sequential level unlocking
+  - Visual level map with zigzag path
+  - XP rewards for completion
+  - Three level types: Flashcards, Quiz, and Exam
+  - Automatic progress tracking
+</Card>
+
+## Level Map Architecture
+
+### Visual Design
+
+The level map displays as a vertical zigzag path:
+
+```dart level_map_page.dart
+Widget _buildPath(BuildContext context, List<LevelEntity> levels) {
+  if (levels.isEmpty) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.map_outlined, size: 60, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          Text(
+            "Aún no hay lecciones generadas.\nIntenta recargar la página.",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey[600]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  return ListView.builder(
+    padding: const EdgeInsets.symmetric(vertical: 40),
+    itemCount: levels.length + 1,  // +1 for final trophy
+    itemBuilder: (context, index) {
+      if (index == levels.length) {
+        // Final Goal (Trophy)
+        return _buildPathItem(
+          child: Column(
+            children: [
+              const Icon(Icons.emoji_events, size: 60, color: Colors.amber),
+              const SizedBox(height: 8),
+              Text(
+                "¡Meta Final!", 
+                style: TextStyle(
+                  color: Colors.amber[800], 
+                  fontWeight: FontWeight.bold
+                )
+              ),
+            ],
+          ),
+          isLeft: index % 2 == 0,
+        );
+      }
+
+      final level = levels[index];
+      return _buildLevelNode(
+        context: context,
+        level: level,
+        color: worldColor,
+        isLeft: index % 2 == 0,  // Alternating sides for zigzag
+      );
+    },
+  );
+}
+```
+
+<Note>
+The alternating `isLeft` parameter creates the signature zigzag pattern, with levels appearing on alternating sides of the path.
+</Note>
+
+## Level Types
+
+Each level has a specific type with unique icons:
+
+```dart level_entity.dart
+enum LevelType { flashcards, quiz, mixed, exam }
+
+class LevelEntity {
+  final String id;
+  final String title;
+  final LevelType type;
+  final bool isLocked;
+  final bool isCompleted;
+  final int difficulty;  // 1 to 5 stars
+
+  const LevelEntity({
+    required this.id,
+    required this.title,
+    required this.type,
+    this.isLocked = false,
+    this.isCompleted = false,
+    this.difficulty = 1,
+  });
+}
+```
+
+### Icon Mapping
+
+```dart level_map_page.dart
+IconData icon;
+switch (level.type) {
+  case LevelType.flashcards:
+    icon = Icons.style;
+    break;
+  case LevelType.quiz:
+    icon = Icons.quiz;
+    break;
+  case LevelType.exam:
+    icon = Icons.history_edu;
+    break;
+  default:
+    icon = Icons.star;
+}
+```
+
+## Lock/Unlock System
+
+### Sequential Unlocking
+
+Levels unlock one at a time:
+
+```dart level_map_page.dart
+Widget _buildLevelNode({
+  required BuildContext context,
+  required LevelEntity level,
+  required Color color,
+  required bool isLeft,
+}) {
+  return InkWell(
+    borderRadius: BorderRadius.circular(50),
+    onTap: level.isLocked
+        ? () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  "Completa el nivel anterior para desbloquear este."
+                )
+              ),
+            );
+          }
+        : () async {
+            // Navigate to appropriate page based on level type
+            if (level.type == LevelType.flashcards) {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => FlashcardsPage(
+                    documentId: documentId, 
+                    topicId: level.id
+                  ),
+                ),
+              );
+            } else if (level.type == LevelType.quiz) {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => QuizPage(
+                    documentId: documentId, 
+                    topicId: level.id
+                  ),
+                ),
+              );
+            }
+            
+            // Reload levels when returning to refresh lock states
+            if (context.mounted) {
+              context.read<LevelBloc>().add(LoadLevels(documentId));
+            }
+          },
+    child: Container(
+      width: 80,
+      height: 80,
+      decoration: BoxDecoration(
+        color: level.isLocked ? Colors.grey[300] : color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 4),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Icon(
+        level.isLocked ? Icons.lock : icon,
+        size: 36,
+        color: Colors.white,
+      ),
+    ),
+  );
+}
+```
+
+<Accordion title="How does the unlock logic work?">
+When a level is completed, the backend marks it as complete. The next level's `isLocked` property is automatically set to `false` by the repository logic. When the user returns to the map, `LoadLevels` is called to fetch the updated lock states.
+</Accordion>
+
+## XP Reward System
+
+Different activities grant different XP amounts:
+
+<CardGroup cols={2}>
+  <Card title="Flashcards" icon="cards-blank">
+    **+10 XP** per topic completed
+  </Card>
+  
+  <Card title="Quizzes" icon="circle-question">
+    **+20 XP** per quiz completed
+  </Card>
+</CardGroup>
+
+### XP Implementation
+
+```dart auth_repository.dart
+abstract class AuthRepository {
+  Future<void> addXp(int amount);
+  // ... other methods
+}
+```
+
+```dart auth_repository_impl.dart
+@override
+Future<void> addXp(int amount) async {
+  try {
+    await remoteDataSource.addXp(amount);
+  } catch (e) {
+    print("Error sumando XP: $e");
+    // Don't throw error to avoid interrupting success UI
+  }
+}
+```
+
+### Awarding XP
+
+XP is awarded when completing activities:
+
+<CodeGroup>
+```dart Flashcards Completion
+void _showCompletionDialog() async {
+  di.sl<AuthRepository>().addXp(10);  // Award 10 XP
+  await di.sl<LevelRepository>().markLevelCompleted(widget.topicId);
+  // ... show dialog
+}
+```
+
+```dart Quiz Completion
+void _showCompletionDialog() async {
+  di.sl<AuthRepository>().addXp(20);  // Award 20 XP (2x flashcards)
+  await di.sl<LevelRepository>().markLevelCompleted(widget.topicId);
+  _confettiController.play();
+  // ... show dialog
+}
+```
+</CodeGroup>
+
+## Level Completion Tracking
+
+### Marking Levels Complete
+
+The repository handles completion state:
+
+```dart level_repository.dart
+abstract class LevelRepository {
+  Future<void> markLevelCompleted(String topicId);
+  // ... other methods
+}
+```
+
+When called, this:
+1. Updates the `completed` status in the database
+2. Unlocks the next sequential level
+3. Triggers any achievement checks
+
+## State Management with BLoC
+
+Level state is managed using the BLoC pattern:
+
+```dart level_map_page.dart
+return BlocProvider(
+  create: (_) => di.sl<LevelBloc>()..add(LoadLevels(documentId)),
+  child: Scaffold(
+    body: BlocBuilder<LevelBloc, LevelState>(
+      builder: (context, state) {
+        if (state is LevelLoading) {
+          return const Center(
+            child: CircularProgressIndicator(color: AppTheme.teal)
+          );
+        } else if (state is LevelError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Text(
+                state.message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
+          );
+        } else if (state is LevelLoaded) {
+          return _buildPath(context, state.levels);
+        }
+        return const SizedBox.shrink();
+      },
+    ),
+  ),
+);
+```
+
+### Reloading After Completion
+
+After completing a level, the map reloads to show updated states:
+
+```dart level_map_page.dart
+// After returning from flashcards or quiz
+if (context.mounted) {
+  context.read<LevelBloc>().add(LoadLevels(documentId));
+}
+```
+
+## World Customization
+
+Each document has customizable world properties:
+
+```dart level_map_page.dart
+class LevelMapPage extends StatelessWidget {
+  final String documentId;
+  final String worldTitle;     // Custom title from AI
+  final Color worldColor;      // Theme color for this world
+
+  const LevelMapPage({
+    super.key,
+    required this.documentId,
+    required this.worldTitle,
+    required this.worldColor,
+  });
+}
+```
+
+### Gradient Background
+
+```dart level_map_page.dart
+Scaffold(
+  appBar: AppBar(
+    title: Text(worldTitle),
+    backgroundColor: worldColor,
+    elevation: 0,
+  ),
+  body: Container(
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [worldColor.withOpacity(0.1), Colors.white],
+      ),
+    ),
+    // ... level map content
+  ),
+)
+```
+
+## Level Node Styling
+
+Each level appears as a circular node:
+
+```dart level_map_page.dart
+Column(
+  children: [
+    Container(
+      width: 80,
+      height: 80,
+      decoration: BoxDecoration(
+        color: level.isLocked ? Colors.grey[300] : color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 4),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Icon(
+        level.isLocked ? Icons.lock : icon,
+        size: 36,
+        color: Colors.white,
+      ),
+    ),
+    const SizedBox(height: 8),
+    Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12, 
+            blurRadius: 4, 
+            offset: const Offset(0, 2)
+          )
+        ],
+      ),
+      child: Text(
+        level.title,
+        style: TextStyle(
+          color: level.isLocked ? Colors.grey : color,
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+        ),
+      ),
+    ),
+  ],
+)
+```
+
+## Zigzag Path Layout
+
+The zigzag effect is created by alternating alignment:
+
+```dart level_map_page.dart
+Widget _buildLevelNode({
+  required BuildContext context,
+  required LevelEntity level,
+  required Color color,
+  required bool isLeft,
+}) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 20.0),
+    child: Row(
+      mainAxisAlignment: isLeft 
+          ? MainAxisAlignment.start 
+          : MainAxisAlignment.end,
+      children: [
+        isLeft ? const SizedBox(width: 40) : const Spacer(),
+        Column(
+          children: [
+            // Level node content
+          ],
+        ),
+        isLeft ? const Spacer() : const SizedBox(width: 40),
+      ],
+    ),
+  );
+}
+```
+
+## Progress Visualization
+
+Each activity shows real-time progress:
+
+### Flashcards Progress
+
+```dart flashcards_page.dart
+final int cardsLeft = _cardsQueue.length;
+final int cardsLearned = _totalInitialCards - cardsLeft;
+final double progress = (_totalInitialCards > 0) 
+    ? (cardsLearned / _totalInitialCards).clamp(0.0, 1.0) 
+    : 0.0;
+
+LinearProgressIndicator(value: progress, color: AppTheme.teal)
+```
+
+### Quiz Progress
+
+```dart quiz_page.dart
+final progress = (_currentIndex + 1) / _questions.length;
+
+LinearProgressIndicator(value: progress, color: AppTheme.teal)
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Always Reload After Completion">
+    Call `LoadLevels` event when returning from a level to refresh lock states
+  </Step>
+  
+  <Step title="Check Mounted Before BLoC Events">
+    Use `if (context.mounted)` before dispatching events after async operations
+  </Step>
+  
+  <Step title="Award XP Before Marking Complete">
+    Call `addXp()` before `markLevelCompleted()` to ensure XP is granted even if completion fails
+  </Step>
+  
+  <Step title="Use Color Theming">
+    Pass world colors through to maintain consistent theming across all levels
+  </Step>
+</Steps>
+
+## Dependency Injection
+
+The system uses dependency injection for clean architecture:
+
+```dart level_map_page.dart
+import '../../../../injection_container.dart' as di;
+
+// In BLoC provider
+create: (_) => di.sl<LevelBloc>()..add(LoadLevels(documentId))
+
+// In completion dialogs
+di.sl<AuthRepository>().addXp(amount);
+di.sl<LevelRepository>().markLevelCompleted(topicId);
+```
+
+<Note>
+`di.sl` is a service locator pattern (using `get_it` package) that provides singleton instances of repositories and BLoCs throughout the app.
+</Note>
+
+## Final Trophy
+
+The level map ends with a trophy indicating course completion:
+
+```dart level_map_page.dart
+if (index == levels.length) {
+  return _buildPathItem(
+    child: Column(
+      children: [
+        const Icon(Icons.emoji_events, size: 60, color: Colors.amber),
+        const SizedBox(height: 8),
+        Text(
+          "¡Meta Final!", 
+          style: TextStyle(
+            color: Colors.amber[800], 
+            fontWeight: FontWeight.bold
+          )
+        ),
+      ],
+    ),
+    isLeft: index % 2 == 0,
+  );
+}
+```
+
+This visual goal motivates students to complete all levels in the world.
